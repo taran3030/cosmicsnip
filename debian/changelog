@@ -1,0 +1,11 @@
+cosmicsnip (0.1.0-1) noble; urgency=low
+
+  * Initial release.
+  * Core capture via cosmic-screenshot (XDG Desktop Portal).
+  * Drag-to-select region overlay with multi-monitor support.
+  * Annotation editor: pen, highlighter, arrow, rectangle tools.
+  * GTK4 native Wayland clipboard (no wl-copy subprocess blocking).
+  * Save As dialog with full path control.
+  * Security hardening: no root execution, symlink checks, path validation.
+
+ -- itssoup <itssoup@users.noreply.github.com>  Thu, 13 Mar 2026 23:00:00 +0000

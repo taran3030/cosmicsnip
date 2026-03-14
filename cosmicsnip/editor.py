@@ -3,25 +3,28 @@ Snip editor window.
 
 Displays the cropped screenshot in a scrollable canvas and provides
 annotation tools (pen, highlighter, arrow, rectangle) with undo,
-copy-to-clipboard, and save.
+copy-to-clipboard, and save-as.
 
 Architecture:
   - Annotations are stored as an append-only list of dicts.
   - Each draw cycle replays the base image + all annotations.
   - Undo pops the last annotation and redraws.
-  - Copy/Save renders to an off-screen cairo surface.
+  - Copy renders to an off-screen cairo surface → GTK4 native clipboard.
+  - Save opens a file-chooser dialog so the user controls the destination.
 """
 
+import io
 import math
 import time
+from pathlib import Path
 
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
+gi.require_foreign("cairo")  # bridge pycairo ↔ PyGObject cairo types
 
 import cairo
-from gi.repository import Gtk, Gdk, GdkPixbuf
-from PIL import Image
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio
 
 from cosmicsnip.config import (
     SAVE_DIR,
@@ -34,7 +37,14 @@ from cosmicsnip.config import (
     DEFAULT_ARROW_HEAD_RATIO,
     MAX_UNDO_HISTORY,
 )
-from cosmicsnip.clipboard import copy_image_to_clipboard, send_notification, ClipboardError
+from cosmicsnip.clipboard import send_notification
+from cosmicsnip.log import get_logger
+from cosmicsnip.security import validate_path_within
+
+log = get_logger("editor")
+
+# How long the transient undo/save status lingers before reverting (ms)
+_STATUS_REVERT_MS = 3000
 
 
 class SnipEditor(Gtk.Window):
@@ -51,10 +61,16 @@ class SnipEditor(Gtk.Window):
         self._app = app
         self._image_path = image_path
 
-        # Load image
-        self._pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+        # Load image — wrap in try/except in case file was deleted in transit
+        try:
+            self._pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+        except Exception as exc:
+            log.exception("Failed to load image for editor: %s", exc)
+            raise
+
         self._img_w = self._pixbuf.get_width()
         self._img_h = self._pixbuf.get_height()
+        log.info("Editor opened: %dx%d px  path=%s", self._img_w, self._img_h, image_path)
 
         # Window sizing: fit image but don't exceed 80% of screen
         display = Gdk.Display.get_default()
@@ -70,6 +86,7 @@ class SnipEditor(Gtk.Window):
         win_w = min(self._img_w + 40, max_w)
         win_h = min(self._img_h + 140, max_h)  # extra for toolbar + status
         self.set_default_size(win_w, win_h)
+        self.set_title(f"CosmicSnip  —  {self._img_w} × {self._img_h}")
 
         # ── State ────────────────────────────────────────────────────────
         self._annotations: list[dict] = []
@@ -82,54 +99,54 @@ class SnipEditor(Gtk.Window):
         self._color = DEFAULT_COLOR
         self._pen_width = DEFAULT_PEN_WIDTH
         self._highlight_width = DEFAULT_HIGHLIGHT_WIDTH
+        self._toggling = False       # re-entrancy guard for tool buttons
+        self._status_timer_id = 0   # GLib timeout id for status auto-revert
 
         # ── Build UI ─────────────────────────────────────────────────────
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.set_child(root)
 
-        root.append(self._build_headerbar())
+        root.append(self._build_toolbar())
         root.append(Gtk.Separator())
         root.append(self._build_canvas_area())
         root.append(self._build_statusbar())
 
         # ── CSS ──────────────────────────────────────────────────────────
         css = Gtk.CssProvider()
-        css.load_from_string(self._get_css())
+        css.load_from_string(_EDITOR_CSS)
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(), css,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
 
-        # ── Keyboard ────────────────────────────────────────────────────
+        # ── Keyboard ─────────────────────────────────────────────────────
         key_ctl = Gtk.EventControllerKey()
         key_ctl.connect("key-pressed", self._on_key)
         self.add_controller(key_ctl)
 
-        # Auto-copy on open
-        self._copy_to_clipboard()
+        # Auto-copy on open — deferred so the window renders first
+        self.connect("map", lambda _w: GLib.idle_add(self._copy_to_clipboard))
 
     # ━━ UI BUILDERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    def _build_headerbar(self) -> Gtk.Box:
-        """Toolbar with tool toggles, color swatches, and action buttons."""
+    def _build_toolbar(self) -> Gtk.Box:
+        """Toolbar: tool toggles | color swatches | width | [spacer] | actions."""
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         bar.set_margin_start(10)
         bar.set_margin_end(10)
         bar.set_margin_top(8)
         bar.set_margin_bottom(8)
 
-        # ── Tool toggles ────────────────────────────────────────────────
+        # ── Tool toggles ─────────────────────────────────────────────────
         tool_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        tool_box.add_css_class("linked")  # visually groups buttons
+        tool_box.add_css_class("linked")
 
         self._tool_buttons: dict[str, Gtk.ToggleButton] = {}
         for tdef in TOOLS:
             btn = Gtk.ToggleButton()
-            icon = Gtk.Image.new_from_icon_name(tdef.icon_name)
-            label = Gtk.Label(label=f" {tdef.label}")
             inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-            inner.append(icon)
-            inner.append(label)
+            inner.append(Gtk.Image.new_from_icon_name(tdef.icon_name))
+            inner.append(Gtk.Label(label=f" {tdef.label}"))
             btn.set_child(inner)
             btn.set_tooltip_text(tdef.tooltip)
             btn.connect("toggled", self._on_tool_toggled, tdef.tool_id)
@@ -139,37 +156,34 @@ class SnipEditor(Gtk.Window):
             self._tool_buttons[tdef.tool_id] = btn
 
         bar.append(tool_box)
-
-        # ── Separator ────────────────────────────────────────────────────
-        sep1 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        sep1.set_margin_start(8)
-        sep1.set_margin_end(8)
-        bar.append(sep1)
+        bar.append(_vsep())
 
         # ── Color swatches ───────────────────────────────────────────────
         color_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._color_buttons: dict[str, Gtk.Button] = {}
+
         for tc in PALETTE:
             btn = Gtk.Button()
-            btn.set_size_request(26, 26)
+            btn.set_size_request(30, 30)
             btn.set_tooltip_text(tc.label)
+            btn.add_css_class("color-swatch")
             swatch = Gtk.DrawingArea()
-            swatch.set_content_width(18)
-            swatch.set_content_height(18)
-            swatch.set_draw_func(self._swatch_draw_func(tc.rgba))
+            swatch.set_content_width(20)
+            swatch.set_content_height(20)
+            swatch.set_draw_func(self._make_swatch_draw(tc.rgba))
             btn.set_child(swatch)
             btn.connect("clicked", self._on_color_clicked, tc)
             color_box.append(btn)
+            self._color_buttons[tc.name] = btn
+
+        # Mark initial active color
+        self._color_buttons[self._color.name].add_css_class("color-active")
         bar.append(color_box)
+        bar.append(_vsep())
 
-        # ── Spacer ───────────────────────────────────────────────────────
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        bar.append(spacer)
-
-        # ── Width control ────────────────────────────────────────────────
-        thin_btn = Gtk.Button()
-        thin_btn.set_child(Gtk.Label(label="╌"))
-        thin_btn.set_tooltip_text("Thinner stroke")
+        # ── Stroke width control ─────────────────────────────────────────
+        thin_btn = Gtk.Button(child=Gtk.Label(label="╌"))
+        thin_btn.set_tooltip_text("Thinner stroke  [ –  ]")
         thin_btn.connect("clicked", lambda _: self._adjust_width(-1))
         bar.append(thin_btn)
 
@@ -177,32 +191,37 @@ class SnipEditor(Gtk.Window):
         self._width_label.add_css_class("monospace")
         bar.append(self._width_label)
 
-        thick_btn = Gtk.Button()
-        thick_btn.set_child(Gtk.Label(label="━"))
-        thick_btn.set_tooltip_text("Thicker stroke")
+        thick_btn = Gtk.Button(child=Gtk.Label(label="━"))
+        thick_btn.set_tooltip_text("Thicker stroke  [ +  ]")
         thick_btn.connect("clicked", lambda _: self._adjust_width(1))
         bar.append(thick_btn)
 
-        # ── Separator ────────────────────────────────────────────────────
-        sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        sep2.set_margin_start(8)
-        sep2.set_margin_end(8)
-        bar.append(sep2)
+        # ── Spacer ────────────────────────────────────────────────────────
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bar.append(spacer)
 
-        # ── Action buttons ───────────────────────────────────────────────
-        undo_btn = Gtk.Button()
-        undo_icon = Gtk.Image.new_from_icon_name("edit-undo-symbolic")
-        undo_btn.set_child(undo_icon)
-        undo_btn.set_tooltip_text("Undo (Ctrl+Z)")
+        # ── Action buttons ────────────────────────────────────────────────
+        undo_btn = Gtk.Button(child=Gtk.Image.new_from_icon_name("edit-undo-symbolic"))
+        undo_btn.set_tooltip_text("Undo last annotation  (Ctrl+Z)")
         undo_btn.connect("clicked", lambda _: self._undo())
         bar.append(undo_btn)
+
+        new_btn = Gtk.Button()
+        new_inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        new_inner.append(Gtk.Image.new_from_icon_name("camera-photo-symbolic"))
+        new_inner.append(Gtk.Label(label="New"))
+        new_btn.set_child(new_inner)
+        new_btn.set_tooltip_text("Start a new snip  (Ctrl+N)")
+        new_btn.connect("clicked", lambda _: self._new_snip())
+        bar.append(new_btn)
 
         copy_btn = Gtk.Button()
         copy_inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         copy_inner.append(Gtk.Image.new_from_icon_name("edit-copy-symbolic"))
         copy_inner.append(Gtk.Label(label="Copy"))
         copy_btn.set_child(copy_inner)
-        copy_btn.set_tooltip_text("Copy to clipboard (Ctrl+C)")
+        copy_btn.set_tooltip_text("Copy annotated image to clipboard  (Ctrl+C)")
         copy_btn.add_css_class("suggested-action")
         copy_btn.connect("clicked", lambda _: self._copy_to_clipboard())
         bar.append(copy_btn)
@@ -212,8 +231,8 @@ class SnipEditor(Gtk.Window):
         save_inner.append(Gtk.Image.new_from_icon_name("document-save-symbolic"))
         save_inner.append(Gtk.Label(label="Save"))
         save_btn.set_child(save_inner)
-        save_btn.set_tooltip_text("Save as… (Ctrl+S)")
-        save_btn.connect("clicked", lambda _: self._save())
+        save_btn.set_tooltip_text("Save annotated image  (Ctrl+S)")
+        save_btn.connect("clicked", lambda _: self._save_as_dialog())
         bar.append(save_btn)
 
         return bar
@@ -229,8 +248,8 @@ class SnipEditor(Gtk.Window):
         self._canvas.set_content_width(self._img_w)
         self._canvas.set_content_height(self._img_h)
         self._canvas.set_draw_func(self._on_draw)
+        self._canvas.set_cursor(Gdk.Cursor.new_from_name("crosshair", None))
 
-        # Mouse input
         drag = Gtk.GestureDrag()
         drag.connect("drag-begin", self._on_drag_begin)
         drag.connect("drag-update", self._on_drag_update)
@@ -241,38 +260,20 @@ class SnipEditor(Gtk.Window):
         return scroll
 
     def _build_statusbar(self) -> Gtk.Box:
-        """Bottom status strip."""
+        """Bottom status strip showing image dimensions and action feedback."""
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         bar.set_margin_start(12)
         bar.set_margin_end(12)
         bar.set_margin_top(6)
         bar.set_margin_bottom(6)
 
-        self._status = Gtk.Label(
-            label=f"{self._img_w} × {self._img_h}  ·  Copied to clipboard"
-        )
+        # Initial text shows dimensions only — "Copied" appears after auto-copy fires
+        self._status = Gtk.Label(label=f"{self._img_w} × {self._img_h} px")
         self._status.set_halign(Gtk.Align.START)
         self._status.add_css_class("dim-label")
         bar.append(self._status)
 
         return bar
-
-    # ━━ CSS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    @staticmethod
-    def _get_css() -> str:
-        return """
-            .snip-pill {
-                background: rgba(0, 0, 0, 0.75);
-                color: white;
-                border-radius: 10px;
-                padding: 10px 22px;
-                font-size: 14px;
-                font-weight: 600;
-            }
-            .dim-label { opacity: 0.6; font-size: 12px; }
-            .monospace { font-family: monospace; font-size: 12px; }
-        """
 
     # ━━ DRAWING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -284,14 +285,13 @@ class SnipEditor(Gtk.Window):
         for ann in self._annotations:
             _render_annotation(cr, ann)
 
-        # In-progress preview
         if self._drawing:
             preview = self._build_current_annotation()
             if preview:
                 _render_annotation(cr, preview)
 
     def _build_current_annotation(self) -> dict | None:
-        """Build an annotation dict for the in-progress stroke/shape."""
+        """Build a preview annotation dict for the in-progress stroke/shape."""
         t = self._active_tool
         color = self._color.rgba
         if t == "pen" and len(self._current_stroke) > 1:
@@ -338,32 +338,41 @@ class SnipEditor(Gtk.Window):
         if not self._drawing:
             return
         self._drawing = False
-
         ann = self._build_current_annotation()
         if ann:
             self._annotations.append(ann)
-            # Enforce undo cap
             if len(self._annotations) > MAX_UNDO_HISTORY:
                 self._annotations = self._annotations[-MAX_UNDO_HISTORY:]
-
+                log.debug("Undo history capped at %d", MAX_UNDO_HISTORY)
         self._current_stroke = []
         self._shape_start = None
         self._canvas.queue_draw()
 
-    # ━━ TOOL CALLBACKS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ━━ TOOL / COLOR CALLBACKS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _on_tool_toggled(self, button: Gtk.ToggleButton, tool_id: str):
-        if button.get_active():
-            self._active_tool = tool_id
-            for tid, btn in self._tool_buttons.items():
-                if tid != tool_id:
-                    btn.set_active(False)
-            self._update_width_display()
-        elif all(not b.get_active() for b in self._tool_buttons.values()):
-            button.set_active(True)  # prevent zero selection
+        if self._toggling:
+            return
+        self._toggling = True
+        try:
+            if button.get_active():
+                self._active_tool = tool_id
+                for tid, btn in self._tool_buttons.items():
+                    if tid != tool_id:
+                        btn.set_active(False)
+                self._update_width_display()
+            else:
+                button.set_active(True)  # prevent zero-selection
+        finally:
+            self._toggling = False
 
     def _on_color_clicked(self, _btn, tc):
+        # Remove active marker from old selection
+        if self._color.name in self._color_buttons:
+            self._color_buttons[self._color.name].remove_css_class("color-active")
         self._color = tc
+        # Apply active marker to new selection
+        self._color_buttons[tc.name].add_css_class("color-active")
 
     def _adjust_width(self, delta: int):
         if self._active_tool == "highlighter":
@@ -373,18 +382,18 @@ class SnipEditor(Gtk.Window):
         self._update_width_display()
 
     def _update_width_display(self):
+        if not hasattr(self, "_width_label"):
+            return
         w = self._highlight_width if self._active_tool == "highlighter" else self._pen_width
         self._width_label.set_label(f" {w}px ")
 
     @staticmethod
-    def _swatch_draw_func(rgba):
+    def _make_swatch_draw(rgba):
         def draw(_area, cr, w, h):
-            # Border
-            cr.set_source_rgba(0.4, 0.4, 0.4, 0.6)
+            cr.set_source_rgba(0.3, 0.3, 0.3, 0.7)
             cr.set_line_width(1)
             cr.rectangle(0.5, 0.5, w - 1, h - 1)
             cr.stroke()
-            # Fill
             cr.set_source_rgba(*rgba)
             cr.rectangle(2, 2, w - 4, h - 4)
             cr.fill()
@@ -396,10 +405,19 @@ class SnipEditor(Gtk.Window):
         if self._annotations:
             self._annotations.pop()
             self._canvas.queue_draw()
-            self._status.set_label("Annotation removed")
+            remaining = len(self._annotations)
+            self._set_transient_status(
+                f"Undo  ·  {remaining} annotation{'s' if remaining != 1 else ''} remaining"
+            )
+
+    def _new_snip(self):
+        """Close the editor and start a fresh capture."""
+        log.info("New snip requested — closing editor and re-activating.")
+        self.close()
+        GLib.idle_add(self._app.activate)
 
     def _render_to_surface(self) -> cairo.ImageSurface:
-        """Render the annotated image to an off-screen surface."""
+        """Render the annotated image to an off-screen cairo surface."""
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, self._img_w, self._img_h)
         cr = cairo.Context(surface)
         Gdk.cairo_set_source_pixbuf(cr, self._pixbuf, 0, 0)
@@ -408,22 +426,100 @@ class SnipEditor(Gtk.Window):
             _render_annotation(cr, ann)
         return surface
 
-    def _save(self) -> str:
-        ts = time.strftime("%Y%m%d-%H%M%S")
-        path = SAVE_DIR / f"snip-{ts}.png"
-        surface = self._render_to_surface()
-        surface.write_to_png(str(path))
-        self._status.set_label(f"Saved → {path.name}")
-        return str(path)
-
     def _copy_to_clipboard(self):
-        path = self._save()
+        """
+        Render annotated image and copy using GTK4's native clipboard API.
+
+        Uses ContentProvider.new_for_bytes with 'image/png' — avoids the
+        wl-copy subprocess which blocks the GTK main loop and causes the
+        Wayland compositor to drop the connection after ~5 seconds.
+        """
         try:
-            copy_image_to_clipboard(path)
-            self._status.set_label(f"Copied to clipboard  ·  {self._img_w} × {self._img_h}")
+            surface = self._render_to_surface()
+
+            buf = io.BytesIO()
+            surface.write_to_png(buf)
+            png_bytes = GLib.Bytes.new(buf.getvalue())
+
+            provider = Gdk.ContentProvider.new_for_bytes("image/png", png_bytes)
+            Gdk.Display.get_default().get_clipboard().set_content(provider)
+
+            self._status.set_label(
+                f"Copied to clipboard  ·  {self._img_w} × {self._img_h} px"
+            )
             send_notification("CosmicSnip", "Screenshot copied to clipboard")
-        except ClipboardError as exc:
+            log.info("Copied to clipboard (%dx%d)", self._img_w, self._img_h)
+        except Exception as exc:
+            log.exception("Copy to clipboard failed: %s", exc)
             self._status.set_label(f"Copy failed: {exc}")
+
+    def _save_as_dialog(self):
+        """Open a Save As file dialog so the user controls the save destination."""
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        dialog = Gtk.FileDialog()
+        dialog.set_title("Save Screenshot As")
+        dialog.set_initial_name(f"snip-{ts}.png")
+        dialog.set_initial_folder(Gio.File.new_for_path(str(SAVE_DIR)))
+
+        filter_png = Gtk.FileFilter()
+        filter_png.set_name("PNG images (*.png)")
+        filter_png.add_mime_type("image/png")
+        filter_png.add_pattern("*.png")
+
+        filters = Gio.ListStore.new(Gtk.FileFilter)
+        filters.append(filter_png)
+        dialog.set_filters(filters)
+        dialog.set_default_filter(filter_png)
+
+        dialog.save(self, None, self._on_save_dialog_response)
+
+    def _on_save_dialog_response(self, dialog, result):
+        """Handle the Save As dialog result."""
+        try:
+            file = dialog.save_finish(result)
+        except GLib.GError:
+            return  # user cancelled — no action needed
+
+        if not file:
+            return
+
+        path = file.get_path()
+        if not path:
+            return
+
+        # Ensure .png extension
+        if not path.lower().endswith(".png"):
+            path += ".png"
+
+        try:
+            surface = self._render_to_surface()
+            surface.write_to_png(path)
+            name = Path(path).name
+            log.info("Saved via dialog: %s", path)
+            self._set_transient_status(f"Saved → {name}")
+            send_notification("CosmicSnip", f"Saved {name}")
+        except Exception as exc:
+            log.exception("Save failed: %s", exc)
+            self._status.set_label(f"Save failed: {exc}")
+
+    # ━━ STATUS HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    def _set_transient_status(self, message: str):
+        """Show a status message that reverts to image dimensions after a timeout."""
+        # Cancel any existing revert timer
+        if self._status_timer_id:
+            GLib.source_remove(self._status_timer_id)
+            self._status_timer_id = 0
+        self._status.set_label(message)
+        self._status_timer_id = GLib.timeout_add(
+            _STATUS_REVERT_MS, self._revert_status
+        )
+
+    def _revert_status(self) -> bool:
+        """Reset status bar to the default dimensions display."""
+        self._status.set_label(f"{self._img_w} × {self._img_h} px")
+        self._status_timer_id = 0
+        return GLib.SOURCE_REMOVE
 
     # ━━ KEYBOARD ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -434,7 +530,6 @@ class SnipEditor(Gtk.Window):
             self.close()
             return True
 
-        # Ctrl shortcuts
         if ctrl:
             if keyval in (Gdk.KEY_c, Gdk.KEY_C):
                 self._copy_to_clipboard()
@@ -443,27 +538,29 @@ class SnipEditor(Gtk.Window):
                 self._undo()
                 return True
             if keyval in (Gdk.KEY_s, Gdk.KEY_S):
-                self._save()
+                self._save_as_dialog()
+                return True
+            if keyval in (Gdk.KEY_n, Gdk.KEY_N):
+                self._new_snip()
                 return True
 
-        # Tool hotkeys
+        # Tool hotkeys (P / H / A / R)
         hotkeys = {"p": "pen", "h": "highlighter", "a": "arrow", "r": "rectangle"}
         char = chr(keyval).lower() if 32 < keyval < 127 else ""
         if char in hotkeys:
-            tid = hotkeys[char]
-            self._tool_buttons[tid].set_active(True)
+            self._tool_buttons[hotkeys[char]].set_active(True)
             return True
 
         return False
 
 
-# ━━ ANNOTATION RENDERER (pure function) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━ ANNOTATION RENDERER (pure, stateless) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _render_annotation(cr, ann: dict) -> None:
     """Draw a single annotation onto a cairo context. Stateless."""
-    atype = ann["type"]
-    color = ann["color"]
-    width = ann["width"]
+    atype = ann.get("type")
+    color = ann.get("color", (1, 0, 0, 1))
+    width = ann.get("width", 3)
 
     cr.set_source_rgba(*color)
     cr.set_line_width(width)
@@ -471,7 +568,7 @@ def _render_annotation(cr, ann: dict) -> None:
     cr.set_line_join(cairo.LINE_JOIN_ROUND)
 
     if atype in ("pen", "highlighter"):
-        pts = ann["points"]
+        pts = ann.get("points", [])
         if len(pts) < 2:
             return
         cr.move_to(*pts[0])
@@ -485,7 +582,6 @@ def _render_annotation(cr, ann: dict) -> None:
         cr.move_to(sx, sy)
         cr.line_to(ex, ey)
         cr.stroke()
-        # Arrowhead
         angle = math.atan2(ey - sy, ex - sx)
         head = max(14, width * DEFAULT_ARROW_HEAD_RATIO)
         ha = DEFAULT_ARROW_HEAD_ANGLE
@@ -500,3 +596,35 @@ def _render_annotation(cr, ann: dict) -> None:
         ex, ey = ann["end"]
         cr.rectangle(min(sx, ex), min(sy, ey), abs(ex - sx), abs(ey - sy))
         cr.stroke()
+
+
+# ━━ HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _vsep() -> Gtk.Separator:
+    """Create a vertical toolbar separator with standard margins."""
+    sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+    sep.set_margin_start(8)
+    sep.set_margin_end(8)
+    return sep
+
+
+# ━━ CSS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_EDITOR_CSS = """
+    .snip-pill {
+        background: rgba(0, 0, 0, 0.75);
+        color: white;
+        border-radius: 10px;
+        padding: 10px 22px;
+        font-size: 14px;
+        font-weight: 600;
+    }
+    .dim-label    { opacity: 0.6; font-size: 12px; }
+    .monospace    { font-family: monospace; font-size: 12px; }
+
+    /* Highlight the active color swatch with a white ring */
+    button.color-active {
+        outline: 2px solid white;
+        outline-offset: -2px;
+    }
+"""
