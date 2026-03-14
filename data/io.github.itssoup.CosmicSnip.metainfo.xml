@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.itssoup.CosmicSnip</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>CosmicSnip</name>
+  <summary>Screenshot snipping tool for COSMIC Desktop</summary>
+  <description>
+    <p>
+      CosmicSnip is a Windows Snipping Tool clone built natively for the COSMIC
+      Desktop Environment on Pop!_OS 24.04 and other Wayland desktops.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Instant fullscreen capture with drag-to-select region</li>
+      <li>Annotation tools: pen, highlighter, arrow, rectangle</li>
+      <li>Copy to clipboard with a single keystroke (Ctrl+C)</li>
+      <li>Save As dialog with full path control (Ctrl+S)</li>
+      <li>Multi-monitor aware — snip from any display</li>
+      <li>Native Wayland — no X11 required</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.itssoup.CosmicSnip.desktop</launchable>
+  <url type="homepage">https://github.com/itssoup/cosmicsnip</url>
+  <url type="bugtracker">https://github.com/itssoup/cosmicsnip/issues</url>
+  <developer_name>itssoup</developer_name>
+  <releases>
+    <release version="0.1.0" date="2026-03-13">
+      <description>
+        <p>Initial release. Core capture, annotation, clipboard, and save features.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+  <recommends>
+    <display_length compare="ge">768</display_length>
+  </recommends>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+</component>

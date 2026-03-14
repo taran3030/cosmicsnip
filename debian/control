@@ -1,0 +1,35 @@
+Source: cosmicsnip
+Section: graphics
+Priority: optional
+Maintainer: itssoup <itssoup@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13), dh-python, python3-all
+Standards-Version: 4.6.2
+Homepage: https://github.com/itssoup/cosmicsnip
+Rules-Requires-Root: no
+
+Package: cosmicsnip
+Architecture: all
+Depends: ${misc:Depends}, ${python3:Depends},
+ python3 (>= 3.10),
+ python3-gi,
+ python3-gi-cairo,
+ gir1.2-gtk-4.0,
+ gir1.2-adw-1,
+ python3-pil,
+ python3-dbus,
+ python3-cairo,
+ wl-clipboard,
+ libnotify-bin
+Description: Screenshot snipping tool for COSMIC Desktop / Wayland
+ CosmicSnip is a Windows Snipping Tool clone built natively for the COSMIC
+ Desktop Environment on Pop!_OS 24.04. It captures the screen via the XDG
+ Desktop Portal, lets you drag to select a region, and opens an annotation
+ editor with pen, highlighter, arrow, and rectangle tools.
+ .
+ Features:
+  * Instant fullscreen capture with drag-to-select region
+  * Annotation tools: pen, highlighter, arrow, rectangle
+  * Copy to Wayland clipboard (Ctrl+C)
+  * Save As dialog with full path control (Ctrl+S)
+  * Multi-monitor aware
+  * Native Wayland — no X11 required
