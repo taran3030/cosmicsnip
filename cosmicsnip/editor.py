@@ -1,16 +1,27 @@
 """
-Snip editor window.
+editor.py — Annotation editor window.
 
 Displays the cropped screenshot in a scrollable canvas and provides
 annotation tools (pen, highlighter, arrow, rectangle) with undo,
-copy-to-clipboard, and save-as.
+clipboard copy, and save-as.
 
 Architecture:
-  - Annotations are stored as an append-only list of dicts.
-  - Each draw cycle replays the base image + all annotations.
-  - Undo pops the last annotation and redraws.
-  - Copy renders to an off-screen cairo surface → GTK4 native clipboard.
-  - Save opens a file-chooser dialog so the user controls the destination.
+    Annotations are stored as an append-only list of dicts. Each draw
+    cycle replays the base image followed by all committed annotations,
+    plus an in-progress preview during an active drag. Undo pops the last
+    annotation. Copy and Save render all annotations to an off-screen
+    cairo surface before writing output.
+
+Changes:
+    - Replaced wl-copy subprocess clipboard with GTK4 native clipboard API
+      (Gdk.ContentProvider) to prevent Wayland compositor disconnects.
+    - Added _auto_copied guard to prevent double clipboard copy when the
+      map signal fires more than once.
+    - Added Save As dialog (Gtk.FileDialog) replacing fixed-path auto-save.
+    - Added New Snip button and Ctrl+N shortcut with hold()/release()
+      bracketing to prevent GTK shutdown during the editor→overlay transition.
+    - Added transient status bar messages that revert to dimensions after 3s.
+    - Added active colour indicator on toolbar swatches.
 """
 
 import io
@@ -21,7 +32,7 @@ from pathlib import Path
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-gi.require_foreign("cairo")  # bridge pycairo ↔ PyGObject cairo types
+gi.require_foreign("cairo")
 
 import cairo
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Gio
@@ -43,7 +54,6 @@ from cosmicsnip.security import validate_path_within
 
 log = get_logger("editor")
 
-# How long the transient undo/save status lingers before reverting (ms)
 _STATUS_REVERT_MS = 3000
 
 
@@ -88,21 +98,23 @@ class SnipEditor(Gtk.Window):
         self.set_default_size(win_w, win_h)
         self.set_title(f"CosmicSnip  —  {self._img_w} × {self._img_h}")
 
-        # ── State ────────────────────────────────────────────────────────
+        # ── Annotation state ──────────────────────────────────────────────
         self._annotations: list[dict] = []
         self._current_stroke: list[tuple[float, float]] = []
         self._drawing = False
         self._shape_start: tuple[float, float] | None = None
         self._shape_end: tuple[float, float] = (0, 0)
 
-        self._active_tool = TOOLS[0].tool_id  # pen
+        # ── Tool / colour state ───────────────────────────────────────────
+        self._active_tool = TOOLS[0].tool_id
         self._color = DEFAULT_COLOR
         self._pen_width = DEFAULT_PEN_WIDTH
         self._highlight_width = DEFAULT_HIGHLIGHT_WIDTH
-        self._toggling = False       # re-entrancy guard for tool buttons
-        self._status_timer_id = 0   # GLib timeout id for status auto-revert
+        self._toggling = False
+        self._status_timer_id = 0
+        self._auto_copied = False
 
-        # ── Build UI ─────────────────────────────────────────────────────
+        # ── Widget tree ───────────────────────────────────────────────────
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.set_child(root)
 
@@ -111,7 +123,6 @@ class SnipEditor(Gtk.Window):
         root.append(self._build_canvas_area())
         root.append(self._build_statusbar())
 
-        # ── CSS ──────────────────────────────────────────────────────────
         css = Gtk.CssProvider()
         css.load_from_string(_EDITOR_CSS)
         Gtk.StyleContext.add_provider_for_display(
@@ -119,25 +130,33 @@ class SnipEditor(Gtk.Window):
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
 
-        # ── Keyboard ─────────────────────────────────────────────────────
+        # ── Keyboard controller ───────────────────────────────────────────
         key_ctl = Gtk.EventControllerKey()
         key_ctl.connect("key-pressed", self._on_key)
         self.add_controller(key_ctl)
 
-        # Auto-copy on open — deferred so the window renders first
-        self.connect("map", lambda _w: GLib.idle_add(self._copy_to_clipboard))
+        self.connect("map", self._on_first_map)
+
+    def _on_first_map(self, _w):
+        if not self._auto_copied:
+            self._auto_copied = True
+            GLib.idle_add(self._copy_to_clipboard)
 
     # ━━ UI BUILDERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _build_toolbar(self) -> Gtk.Box:
-        """Toolbar: tool toggles | color swatches | width | [spacer] | actions."""
+        """
+        Build the horizontal toolbar.
+
+        Layout: tool toggles | colour swatches | stroke width | spacer | actions.
+        """
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         bar.set_margin_start(10)
         bar.set_margin_end(10)
         bar.set_margin_top(8)
         bar.set_margin_bottom(8)
 
-        # ── Tool toggles ─────────────────────────────────────────────────
+        # ── Tool toggles ──────────────────────────────────────────────────
         tool_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         tool_box.add_css_class("linked")
 
@@ -158,7 +177,7 @@ class SnipEditor(Gtk.Window):
         bar.append(tool_box)
         bar.append(_vsep())
 
-        # ── Color swatches ───────────────────────────────────────────────
+        # ── Colour swatches ───────────────────────────────────────────────
         color_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
         self._color_buttons: dict[str, Gtk.Button] = {}
 
@@ -176,12 +195,11 @@ class SnipEditor(Gtk.Window):
             color_box.append(btn)
             self._color_buttons[tc.name] = btn
 
-        # Mark initial active color
         self._color_buttons[self._color.name].add_css_class("color-active")
         bar.append(color_box)
         bar.append(_vsep())
 
-        # ── Stroke width control ─────────────────────────────────────────
+        # ── Stroke width ──────────────────────────────────────────────────
         thin_btn = Gtk.Button(child=Gtk.Label(label="╌"))
         thin_btn.set_tooltip_text("Thinner stroke  [ –  ]")
         thin_btn.connect("clicked", lambda _: self._adjust_width(-1))
@@ -201,7 +219,7 @@ class SnipEditor(Gtk.Window):
         spacer.set_hexpand(True)
         bar.append(spacer)
 
-        # ── Action buttons ────────────────────────────────────────────────
+        # ── Actions ───────────────────────────────────────────────────────
         undo_btn = Gtk.Button(child=Gtk.Image.new_from_icon_name("edit-undo-symbolic"))
         undo_btn.set_tooltip_text("Undo last annotation  (Ctrl+Z)")
         undo_btn.connect("clicked", lambda _: self._undo())
@@ -278,7 +296,9 @@ class SnipEditor(Gtk.Window):
     # ━━ DRAWING ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _on_draw(self, _area, cr, w, h):
-        """Replay base image + all annotations + in-progress stroke."""
+        """
+        Render the canvas: base image → committed annotations → live preview.
+        """
         Gdk.cairo_set_source_pixbuf(cr, self._pixbuf, 0, 0)
         cr.paint()
 
@@ -348,9 +368,19 @@ class SnipEditor(Gtk.Window):
         self._shape_start = None
         self._canvas.queue_draw()
 
-    # ━━ TOOL / COLOR CALLBACKS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # ━━ TOOL / COLOUR CALLBACKS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     def _on_tool_toggled(self, button: Gtk.ToggleButton, tool_id: str):
+        """
+        Switch the active tool.
+
+        _toggling guards against re-entrancy: set_active(False) on the
+        previously active button would otherwise re-fire this handler and
+        create an infinite loop.
+
+        Prevents zero-selection by re-activating the button when the user
+        clicks an already-active tool toggle (GTK would otherwise deactivate it).
+        """
         if self._toggling:
             return
         self._toggling = True
@@ -362,7 +392,7 @@ class SnipEditor(Gtk.Window):
                         btn.set_active(False)
                 self._update_width_display()
             else:
-                button.set_active(True)  # prevent zero-selection
+                button.set_active(True)
         finally:
             self._toggling = False
 
@@ -400,6 +430,8 @@ class SnipEditor(Gtk.Window):
         return draw
 
     # ━━ ACTIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #
+    # _undo, _new_snip, _copy_to_clipboard, _save_as_dialog
 
     def _undo(self):
         if self._annotations:
@@ -411,10 +443,22 @@ class SnipEditor(Gtk.Window):
             )
 
     def _new_snip(self):
-        """Close the editor and start a fresh capture."""
+        """
+        Close the editor and start a fresh capture session.
+
+        hold() is called before close() so GTK does not begin shutdown
+        while zero windows exist. _restart_capture() releases the hold
+        immediately before activate() creates the new overlay window.
+        """
         log.info("New snip requested — closing editor and re-activating.")
+        self._app.hold()
         self.close()
-        GLib.idle_add(self._app.activate)
+        GLib.idle_add(self._restart_capture)
+
+    def _restart_capture(self):
+        """Release the app hold and trigger a new capture (via idle_add)."""
+        self._app.release()
+        self._app.activate()
 
     def _render_to_surface(self) -> cairo.ImageSurface:
         """Render the annotated image to an off-screen cairo surface."""
@@ -428,11 +472,11 @@ class SnipEditor(Gtk.Window):
 
     def _copy_to_clipboard(self):
         """
-        Render annotated image and copy using GTK4's native clipboard API.
+        Render the annotated image and write it to the GTK4 native clipboard.
 
-        Uses ContentProvider.new_for_bytes with 'image/png' — avoids the
-        wl-copy subprocess which blocks the GTK main loop and causes the
-        Wayland compositor to drop the connection after ~5 seconds.
+        Uses Gdk.ContentProvider with MIME type 'image/png'. This replaces
+        the previous wl-copy subprocess, which blocked the GTK main loop and
+        caused the Wayland compositor to drop the connection after ~5 seconds.
         """
         try:
             surface = self._render_to_surface()
@@ -503,6 +547,10 @@ class SnipEditor(Gtk.Window):
             self._status.set_label(f"Save failed: {exc}")
 
     # ━━ STATUS HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #
+    # Status messages for transient feedback (undo, save, copy). After
+    # _STATUS_REVERT_MS milliseconds, the status bar reverts to showing
+    # the image dimensions.
 
     def _set_transient_status(self, message: str):
         """Show a status message that reverts to image dimensions after a timeout."""
@@ -522,6 +570,9 @@ class SnipEditor(Gtk.Window):
         return GLib.SOURCE_REMOVE
 
     # ━━ KEYBOARD ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #
+    # Ctrl+C copy · Ctrl+Z undo · Ctrl+S save · Ctrl+N new snip · Escape close
+    # P pen · H highlighter · A arrow · R rectangle
 
     def _on_key(self, _ctl, keyval, _keycode, state):
         ctrl = state & Gdk.ModifierType.CONTROL_MASK
@@ -554,7 +605,11 @@ class SnipEditor(Gtk.Window):
         return False
 
 
-# ━━ ANNOTATION RENDERER (pure, stateless) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━ ANNOTATION RENDERER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Pure stateless function — no side effects, no reference to SnipEditor.
+# Called from both the live canvas draw loop and the off-screen render
+# used by copy-to-clipboard and save.
 
 def _render_annotation(cr, ann: dict) -> None:
     """Draw a single annotation onto a cairo context. Stateless."""
@@ -601,7 +656,7 @@ def _render_annotation(cr, ann: dict) -> None:
 # ━━ HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _vsep() -> Gtk.Separator:
-    """Create a vertical toolbar separator with standard margins."""
+    """Vertical toolbar separator with standard margins."""
     sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
     sep.set_margin_start(8)
     sep.set_margin_end(8)
@@ -609,6 +664,9 @@ def _vsep() -> Gtk.Separator:
 
 
 # ━━ CSS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Scoped to the editor window. The .color-active class marks the currently
+# selected colour swatch with a white outline ring.
 
 _EDITOR_CSS = """
     .snip-pill {

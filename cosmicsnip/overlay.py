@@ -1,23 +1,33 @@
 """
-Fullscreen selection overlay.
+overlay.py — Fullscreen region-selection overlay.
 
-Displays the captured screenshot under a semi-transparent dim layer.
-The user drags to select a rectangular region, which is highlighted
-in real time. Releasing the mouse finalises the selection and hands
-the crop coordinates back to the caller via a callback.
+Displays the captured screenshot (which may span multiple monitors as one
+combined image) scaled to fit the overlay window. The user drags to select
+a rectangular region; releasing the mouse finalises the selection and fires
+the on_selected callback with image-space coordinates.
 
-Multi-monitor: cosmic-screenshot captures all monitors into one combined
-image. This overlay detects which monitor it is on, crops to that monitor's
-region, and pre-scales it once for fast rendering.
+Multi-monitor strategy:
+    cosmic-screenshot captures all monitors into a single combined image.
+    Rather than trying to place separate overlay windows on each monitor
+    (which COSMIC's Wayland compositor does not honour), this module scales
+    the entire combined image to fit one fullscreen window. The user can
+    select content from any monitor in a single interaction.
 
 Keyboard:
-  Escape — cancel and close.
+    Escape — cancel and close.
+
+Changes:
+    - Replaced per-monitor cropping with fit-to-canvas scaling so both
+      monitors are visible and selectable in a single overlay window.
+    - Added retry loop when canvas allocation is 0×0 at map time.
+    - Fixed Escape key to close before firing the cancel callback.
+    - Added return GLib.SOURCE_REMOVE from cache builder for timeout safety.
 """
 
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-gi.require_foreign("cairo")  # bridge pycairo ↔ PyGObject cairo types
+gi.require_foreign("cairo")
 
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 from typing import Callable
@@ -35,13 +45,18 @@ log = get_logger("overlay")
 
 class SelectionOverlay(Gtk.Window):
     """
-    A frameless fullscreen window for region selection.
+    Frameless fullscreen window for region selection.
+
+    Scales the full combined screenshot to fit the window, preserving aspect
+    ratio (letterbox/pillarbox). The user drags a rectangle; on release the
+    canvas coordinates are mapped back to full image coordinates and passed
+    to the on_selected callback.
 
     Args:
-        app: The parent Gtk.Application.
-        image_path: Filesystem path to the fullscreen capture (may span all monitors).
-        on_selected: Callback receiving (image_path, x1, y1, x2, y2) in image coords.
-        on_cancelled: Callback with no args when user presses Escape.
+        app:         The parent Gtk.Application.
+        image_path:  Path to the fullscreen capture (may span all monitors).
+        on_selected: Callback — (image_path, x1, y1, x2, y2) in image pixels.
+        on_cancelled: Callback — no args, called on Escape.
     """
 
     def __init__(
@@ -56,42 +71,45 @@ class SelectionOverlay(Gtk.Window):
         self._on_selected = on_selected
         self._on_cancelled = on_cancelled
 
-        # Load full combined screenshot (may span multiple monitors)
+        # ── Load screenshot ───────────────────────────────────────────────
         log.info("Loading screenshot into overlay: %s", image_path)
         self._pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
         self._img_w = self._pixbuf.get_width()
         self._img_h = self._pixbuf.get_height()
         log.info("Pixbuf loaded: %dx%d px", self._img_w, self._img_h)
 
-        # Display cache — set once the window is mapped and we know which monitor we're on
+        # ── Display cache ─────────────────────────────────────────────────
+        # Set once the window is mapped and we know the canvas size.
+        # _disp_x/y: top-left corner of the scaled image within the canvas.
+        # _disp_w/h: pixel size of the scaled image on-canvas.
+        # _disp_scale: factor applied to go from image pixels → canvas pixels.
         self._display_pixbuf: GdkPixbuf.Pixbuf | None = None
-        # Portion of the full image that corresponds to THIS monitor (image pixels)
-        self._img_offset_x: int = 0
-        self._img_offset_y: int = 0
-        self._img_mon_w: int = self._img_w
-        self._img_mon_h: int = self._img_h
+        self._disp_x: int = 0
+        self._disp_y: int = 0
+        self._disp_w: int = self._img_w
+        self._disp_h: int = self._img_h
+        self._disp_scale: float = 1.0
 
-        # Drag state
+        # ── Drag state ────────────────────────────────────────────────────
         self._dragging = False
         self._sx = self._sy = 0.0
         self._ex = self._ey = 0.0
         self._has_selection = False
 
-        # Window chrome
+        # ── Window setup ──────────────────────────────────────────────────
         self.set_decorated(False)
         self.set_cursor(Gdk.Cursor.new_from_name("crosshair", None))
+        self.fullscreen()
 
-        # Root overlay
+        # ── Widget tree ───────────────────────────────────────────────────
         root = Gtk.Overlay()
 
-        # Canvas
         self._canvas = Gtk.DrawingArea()
         self._canvas.set_hexpand(True)
         self._canvas.set_vexpand(True)
         self._canvas.set_draw_func(self._draw)
         root.set_child(self._canvas)
 
-        # Instruction pill
         pill = Gtk.Label(label="  Drag to select  ·  Esc to cancel  ")
         pill.set_halign(Gtk.Align.CENTER)
         pill.set_valign(Gtk.Align.START)
@@ -100,12 +118,8 @@ class SelectionOverlay(Gtk.Window):
         root.add_overlay(pill)
 
         self.set_child(root)
-        self.fullscreen()
 
-        # Build the display cache after the window is mapped (allocation is final)
-        self.connect("map", self._on_mapped)
-
-        # ── Input controllers ────────────────────────────────────────────
+        # ── Input controllers ─────────────────────────────────────────────
         click = Gtk.GestureClick(button=1)
         click.connect("pressed", self._on_press)
         click.connect("released", self._on_release)
@@ -119,142 +133,105 @@ class SelectionOverlay(Gtk.Window):
         key_ctl.connect("key-pressed", self._on_key)
         self.add_controller(key_ctl)
 
-    # ── Display cache ────────────────────────────────────────────────────
+        self.connect("map", self._on_mapped)
+
+    # ── Display cache ─────────────────────────────────────────────────────
 
     def _on_mapped(self, _window):
-        """Window is now visible and has a real allocation — build the display cache."""
+        """Kick off cache build once the window has a real allocation."""
         GLib.idle_add(self._build_display_cache)
 
     def _build_display_cache(self):
         """
-        Determine which monitor this overlay is on, crop the combined screenshot
-        to just that monitor's region, then pre-scale to canvas size.
-        This runs once; all subsequent draws just blit the cached pixbuf.
+        Scale the full combined screenshot to fit the canvas (aspect-ratio
+        preserved). Stores the scaled pixbuf and the offset/scale values
+        used by _draw and _finalise. Retries every 50 ms if the canvas has
+        not received its allocation yet.
         """
         alloc = self._canvas.get_allocation()
         canvas_w, canvas_h = alloc.width, alloc.height
-        log.info("Building display cache: canvas=%dx%d", canvas_w, canvas_h)
 
         if canvas_w <= 0 or canvas_h <= 0:
             log.warning("Canvas has no allocation yet — retrying in 50 ms.")
             GLib.timeout_add(50, self._build_display_cache)
             return GLib.SOURCE_REMOVE
 
-        display = Gdk.Display.get_default()
-        monitors = display.get_monitors()
-        n = monitors.get_n_items()
+        scale = min(canvas_w / self._img_w, canvas_h / self._img_h)
+        disp_w = int(self._img_w * scale)
+        disp_h = int(self._img_h * scale)
 
-        # Find the bounding box of all monitors in logical coords
-        max_x = max_y = 0
-        for i in range(n):
-            g = monitors.get_item(i).get_geometry()
-            max_x = max(max_x, g.x + g.width)
-            max_y = max(max_y, g.y + g.height)
-        log.info("Total logical desktop: %dx%d  (image: %dx%d  monitors: %d)",
-                 max_x, max_y, self._img_w, self._img_h, n)
+        self._disp_x = (canvas_w - disp_w) // 2
+        self._disp_y = (canvas_h - disp_h) // 2
+        self._disp_w = disp_w
+        self._disp_h = disp_h
+        self._disp_scale = scale
 
-        # Scale factor: logical coords → image pixels
-        sx = self._img_w / max_x if max_x > 0 else 1.0
-        sy = self._img_h / max_y if max_y > 0 else 1.0
-        log.info("Logical→image scale: sx=%.3f  sy=%.3f", sx, sy)
-
-        # Find which monitor this window is on
-        surface = self.get_surface()
-        if surface and n > 0:
-            mon = display.get_monitor_at_surface(surface)
-        else:
-            mon = monitors.get_item(0)
-
-        g = mon.get_geometry()
-        log.info("This monitor: logical (%d,%d) %dx%d", g.x, g.y, g.width, g.height)
-
-        self._img_offset_x = int(g.x * sx)
-        self._img_offset_y = int(g.y * sy)
-        self._img_mon_w = int(g.width * sx)
-        self._img_mon_h = int(g.height * sy)
-
-        # Clamp to image bounds
-        self._img_offset_x = min(self._img_offset_x, self._img_w)
-        self._img_offset_y = min(self._img_offset_y, self._img_h)
-        self._img_mon_w = min(self._img_mon_w, self._img_w - self._img_offset_x)
-        self._img_mon_h = min(self._img_mon_h, self._img_h - self._img_offset_y)
-
-        log.info("Monitor region in image: offset=(%d,%d) size=%dx%d",
-                 self._img_offset_x, self._img_offset_y,
-                 self._img_mon_w, self._img_mon_h)
+        log.info(
+            "Display cache: canvas=%dx%d  image=%dx%d  scale=%.3f  offset=(%d,%d)",
+            canvas_w, canvas_h, disp_w, disp_h, scale, self._disp_x, self._disp_y,
+        )
 
         try:
-            # Crop to this monitor's region, then scale to canvas size in one step
-            sub = self._pixbuf.new_subpixbuf(
-                self._img_offset_x, self._img_offset_y,
-                self._img_mon_w, self._img_mon_h,
+            self._display_pixbuf = self._pixbuf.scale_simple(
+                disp_w, disp_h, GdkPixbuf.InterpType.BILINEAR
             )
-            self._display_pixbuf = sub.scale_simple(
-                canvas_w, canvas_h, GdkPixbuf.InterpType.BILINEAR
-            )
-            log.info("Display cache ready: %dx%d", canvas_w, canvas_h)
         except Exception as exc:
-            log.error("Failed to build display cache: %s — falling back to full image", exc)
+            log.error("scale_simple failed: %s — using unscaled pixbuf", exc)
             self._display_pixbuf = self._pixbuf
 
         self._canvas.queue_draw()
         return GLib.SOURCE_REMOVE
 
-    # ── Drawing ──────────────────────────────────────────────────────────
+    # ── Drawing ───────────────────────────────────────────────────────────
 
     def _draw(self, _area, cr, w: int, h: int):
-        if w == 0 or h == 0:
-            return
-
-        if self._display_pixbuf is None:
-            # Cache not ready yet — draw a plain dark background
-            cr.set_source_rgb(0.08, 0.08, 0.08)
-            cr.paint()
-            return
-
-        # Background: pre-scaled screenshot — 1:1 blit, no per-frame scaling
-        Gdk.cairo_set_source_pixbuf(cr, self._display_pixbuf, 0, 0)
+        """
+        Render: black fill → scaled screenshot → dim layer → selection rect.
+        The screenshot is painted at (_disp_x, _disp_y) so black bars appear
+        for any space not covered by the image (letterbox / pillarbox).
+        """
+        cr.set_source_rgb(0, 0, 0)
         cr.paint()
 
-        # Dim layer
+        if self._display_pixbuf is None:
+            return
+
+        Gdk.cairo_set_source_pixbuf(cr, self._display_pixbuf, self._disp_x, self._disp_y)
+        cr.paint()
+
         cr.set_source_rgba(0, 0, 0, OVERLAY_DIM_ALPHA)
-        cr.rectangle(0, 0, w, h)
+        cr.rectangle(self._disp_x, self._disp_y, self._disp_w, self._disp_h)
         cr.fill()
 
         if not self._has_selection:
             return
 
-        x1, y1 = min(self._sx, self._ex), min(self._sy, self._ey)
-        x2, y2 = max(self._sx, self._ex), max(self._sy, self._ey)
+        x1, y1, x2, y2 = self._clamped_selection()
         sw, sh = x2 - x1, y2 - y1
 
         if sw < 2 or sh < 2:
             return
 
-        # Bright cutout: clip to selection rect and repaint the cached pixbuf
         cr.save()
         cr.rectangle(x1, y1, sw, sh)
         cr.clip()
-        Gdk.cairo_set_source_pixbuf(cr, self._display_pixbuf, 0, 0)
+        Gdk.cairo_set_source_pixbuf(cr, self._display_pixbuf, self._disp_x, self._disp_y)
         cr.paint()
         cr.restore()
 
-        # Selection border
         r, g, b, a = SELECTION_BORDER_COLOR
         cr.set_source_rgba(r, g, b, a)
         cr.set_line_width(SELECTION_BORDER_WIDTH)
         cr.rectangle(x1, y1, sw, sh)
         cr.stroke()
 
-        # Dimension badge (in image pixels)
-        kx = self._img_mon_w / w if w else 1.0
-        ky = self._img_mon_h / h if h else 1.0
-        iw, ih = int(sw * kx), int(sh * ky)
+        iw = int(sw / self._disp_scale)
+        ih = int(sh / self._disp_scale)
         dim = f"{iw} × {ih}"
         cr.set_font_size(12)
         ext = cr.text_extents(dim)
         bx = x1
-        by = min(y2 + 8, h - 28)  # keep badge on screen
+        by = min(y2 + 8, h - 28)
         cr.set_source_rgba(0, 0, 0, 0.8)
         cr.rectangle(bx, by, ext.width + 16, 24)
         cr.fill()
@@ -262,70 +239,72 @@ class SelectionOverlay(Gtk.Window):
         cr.move_to(bx + 8, by + 17)
         cr.show_text(dim)
 
-    # ── Input handlers ───────────────────────────────────────────────────
+    # ── Input handlers ────────────────────────────────────────────────────
 
     def _on_press(self, _gesture, _n, x, y):
+        """Begin drag; clamp start point to the image area."""
+        x = max(self._disp_x, min(x, self._disp_x + self._disp_w))
+        y = max(self._disp_y, min(y, self._disp_y + self._disp_h))
         self._dragging = True
         self._sx = self._ex = x
         self._sy = self._ey = y
         self._has_selection = True
 
     def _on_drag_update(self, gesture, dx, dy):
+        """Update drag end-point; clamp to image area."""
         if not self._dragging:
             return
         ok, ox, oy = gesture.get_start_point()
         if ok:
-            self._ex = ox + dx
-            self._ey = oy + dy
+            self._ex = max(self._disp_x, min(ox + dx, self._disp_x + self._disp_w))
+            self._ey = max(self._disp_y, min(oy + dy, self._disp_y + self._disp_h))
             self._canvas.queue_draw()
 
     def _on_release(self, _gesture, _n, x, y):
+        """End drag; finalise if the selection meets the minimum size."""
         self._dragging = False
-        self._ex, self._ey = x, y
+        self._ex = max(self._disp_x, min(x, self._disp_x + self._disp_w))
+        self._ey = max(self._disp_y, min(y, self._disp_y + self._disp_h))
         self._canvas.queue_draw()
 
-        sw = abs(self._ex - self._sx)
-        sh = abs(self._ey - self._sy)
-
-        if sw >= MIN_SELECTION_SIZE and sh >= MIN_SELECTION_SIZE:
+        x1, y1, x2, y2 = self._clamped_selection()
+        if (x2 - x1) >= MIN_SELECTION_SIZE and (y2 - y1) >= MIN_SELECTION_SIZE:
             self._finalise()
 
     def _on_key(self, _ctl, keyval, _keycode, _state):
+        """Close first, then fire callback — matches the _finalise pattern."""
         if keyval == Gdk.KEY_Escape:
-            self._on_cancelled()
             self.close()
+            self._on_cancelled()
             return True
         return False
 
-    # ── Finalise ─────────────────────────────────────────────────────────
+    # ── Coordinate helpers ────────────────────────────────────────────────
+
+    def _clamped_selection(self) -> tuple[float, float, float, float]:
+        """Return (x1, y1, x2, y2) in canvas coords, clamped to image bounds."""
+        x1 = max(self._disp_x, min(self._sx, self._ex))
+        y1 = max(self._disp_y, min(self._sy, self._ey))
+        x2 = min(self._disp_x + self._disp_w, max(self._sx, self._ex))
+        y2 = min(self._disp_y + self._disp_h, max(self._sy, self._ey))
+        return x1, y1, x2, y2
 
     def _finalise(self):
-        """Convert canvas coords → image coords and invoke callback."""
-        alloc = self._canvas.get_allocation()
-        log.info("Finalising selection: canvas alloc=%dx%d", alloc.width, alloc.height)
-        if alloc.width == 0 or alloc.height == 0:
-            log.error("Canvas has zero allocation — cannot finalise.")
-            return
+        """
+        Map clamped canvas coordinates back to full image pixel coordinates
+        and invoke the on_selected callback.
+        """
+        x1, y1, x2, y2 = self._clamped_selection()
 
-        # Scale from canvas coords to monitor-region image coords
-        kx = self._img_mon_w / alloc.width
-        ky = self._img_mon_h / alloc.height
-
-        x1 = self._img_offset_x + max(0, int(min(self._sx, self._ex) * kx))
-        y1 = self._img_offset_y + max(0, int(min(self._sy, self._ey) * ky))
-        x2 = self._img_offset_x + min(self._img_mon_w, int(max(self._sx, self._ex) * kx))
-        y2 = self._img_offset_y + min(self._img_mon_h, int(max(self._sy, self._ey) * ky))
-
-        # Clamp to full image bounds
-        x1 = max(0, min(x1, self._img_w))
-        y1 = max(0, min(y1, self._img_h))
-        x2 = max(0, min(x2, self._img_w))
-        y2 = max(0, min(y2, self._img_h))
+        ix1 = max(0, min(int((x1 - self._disp_x) / self._disp_scale), self._img_w))
+        iy1 = max(0, min(int((y1 - self._disp_y) / self._disp_scale), self._img_h))
+        ix2 = max(0, min(int((x2 - self._disp_x) / self._disp_scale), self._img_w))
+        iy2 = max(0, min(int((y2 - self._disp_y) / self._disp_scale), self._img_h))
 
         log.info(
-            "Selection: screen=(%.1f,%.1f)→(%.1f,%.1f)  image=(%d,%d)→(%d,%d)  size=%dx%d",
-            self._sx, self._sy, self._ex, self._ey,
-            x1, y1, x2, y2, x2 - x1, y2 - y1,
+            "Selection finalised: canvas=(%.0f,%.0f)→(%.0f,%.0f)  "
+            "image=(%d,%d)→(%d,%d)  size=%dx%d",
+            x1, y1, x2, y2, ix1, iy1, ix2, iy2, ix2 - ix1, iy2 - iy1,
         )
         self.close()
-        self._on_selected(self._image_path, x1, y1, x2, y2)
+        self._on_selected(self._image_path, ix1, iy1, ix2, iy2)

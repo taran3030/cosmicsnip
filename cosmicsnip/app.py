@@ -1,8 +1,16 @@
-#!/usr/bin/env python3
 """
-CosmicSnip — application entry point.
+app.py — Application lifecycle orchestrator.
 
-Orchestrates the capture → select → edit flow.
+Manages the linear flow: capture → region selection → annotation editor.
+Each stage is a separate module; this file wires them together and handles
+error recovery and GTK application lifecycle housekeeping.
+
+Changes:
+    - CSS provider registered once per process (not on every activation).
+    - hold()/release() bracketing extended to the New Snip flow.
+    - release() called in crop-failure path to prevent hold count leak.
+    - Removed multi-overlay logic; overlay.py now handles multi-monitor
+      by showing the full combined image scaled to fit one window.
 """
 
 import sys
@@ -28,27 +36,37 @@ log = get_logger("app")
 
 
 class CosmicSnipApp(Gtk.Application):
-    """Top-level application managing the capture → select → edit lifecycle."""
+    """
+    Top-level GTK application.
+
+    Lifecycle:
+        activate → _on_activate → capture → SelectionOverlay
+                                           → _on_region_selected → SnipEditor
+                                           → _on_cancelled → quit
+    """
 
     def __init__(self):
         super().__init__(application_id=__app_id__)
+        self._css_loaded = False
         self.connect("activate", self._on_activate)
 
+    # ── Activation ────────────────────────────────────────────────────────
+
     def _on_activate(self, _app):
+        """Entry point for each capture session (initial launch and New Snip)."""
         log.info("App activated.")
-        # Housekeeping
         ensure_directories()
         cleanup_temp_files()
 
-        # Load global CSS
-        css = Gtk.CssProvider()
-        css.load_from_string(_APP_CSS)
-        Gtk.StyleContext.add_provider_for_display(
-            Gdk.Display.get_default(), css,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
-        )
+        if not self._css_loaded:
+            css = Gtk.CssProvider()
+            css.load_from_string(_APP_CSS)
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(), css,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+            self._css_loaded = True
 
-        # Capture
         log.info("Starting screen capture...")
         try:
             image_path = capture_screen()
@@ -58,7 +76,6 @@ class CosmicSnipApp(Gtk.Application):
             self._show_error(str(exc))
             return
 
-        # Show selection overlay
         log.info("Presenting selection overlay.")
         overlay = SelectionOverlay(
             app=self,
@@ -68,46 +85,66 @@ class CosmicSnipApp(Gtk.Application):
         )
         overlay.present()
 
+    # ── Selection callbacks ───────────────────────────────────────────────
+
     def _on_region_selected(
         self, image_path: str, x1: int, y1: int, x2: int, y2: int
     ):
-        """Crop the region and open the editor."""
-        log.info("Region selected: (%d,%d)→(%d,%d)  size=%dx%d", x1, y1, x2, y2, x2-x1, y2-y1)
+        """
+        Crop the selected region from the full screenshot and open the editor.
+
+        hold() is called before the overlay closes so GTK does not begin
+        shutdown while zero windows exist. release() is called once the
+        editor window is registered with the application.
+        """
+        self.hold()
+        log.info(
+            "Region selected: (%d,%d)→(%d,%d)  size=%dx%d",
+            x1, y1, x2, y2, x2 - x1, y2 - y1,
+        )
         try:
             img = Image.open(image_path)
             cropped = img.crop((x1, y1, x2, y2))
 
             ts = time.strftime("%Y%m%d-%H%M%S")
             crop_path = str(SAVE_DIR / f"snip-{ts}.png")
-            validate_path_within(crop_path, SAVE_DIR)  # guard against traversal
+            validate_path_within(crop_path, SAVE_DIR)
             cropped.save(crop_path, "PNG")
             log.info("Cropped image saved: %s", crop_path)
 
-            # hold() prevents GTK from starting app shutdown when the overlay
-            # closes and there are temporarily zero windows.  release() is
-            # called inside _open_editor once the editor window is registered.
-            self.hold()
             GLib.idle_add(self._open_editor, crop_path)
         except Exception as exc:
             log.exception("Failed to crop/open image: %s", exc)
+            self.release()
             self._show_error(f"Failed to crop image: {exc}")
 
     def _open_editor(self, crop_path: str):
-        """Open the editor window (called via idle_add after overlay closes)."""
+        """
+        Instantiate and present the editor window.
+
+        Called via idle_add so the overlay has fully closed before the editor
+        window is created. release() is called after present() so the editor
+        window is registered before the hold count drops to zero.
+        """
         log.info("Opening editor: %s", crop_path)
         editor = SnipEditor(app=self, image_path=crop_path)
         editor.present()
-        self.release()  # editor window is now registered — safe to release hold
+        self.release()
 
     def _on_cancelled(self):
-        """User pressed Escape during selection."""
+        """User pressed Escape — exit the application."""
         log.info("Selection cancelled by user.")
         self.quit()
 
+    # ── Error display ─────────────────────────────────────────────────────
+
     def _show_error(self, message: str):
-        """Display an error dialog and quit."""
-        # AlertDialog requires a parent window; create a hidden one to avoid
-        # the 'GtkDialog mapped without a transient parent' warning.
+        """
+        Display a modal error dialog, then quit.
+
+        A hidden parent window is required by Gtk.AlertDialog to suppress
+        the 'GtkDialog mapped without a transient parent' warning.
+        """
         parent = Gtk.Window(application=self)
         parent.set_visible(False)
 
@@ -118,7 +155,7 @@ class CosmicSnipApp(Gtk.Application):
         dialog.choose(parent, None, lambda _d, _r: self.quit())
 
 
-# ── Global CSS ───────────────────────────────────────────────────────────────
+# ── Application CSS ───────────────────────────────────────────────────────────
 
 _APP_CSS = """
     .snip-pill {
@@ -141,10 +178,12 @@ _APP_CSS = """
 """
 
 
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 def main():
-    """CLI entry point."""
+    """CLI entry point — called by the cosmicsnip launcher script."""
     setup_logging(debug="--debug" in sys.argv)
-    refuse_root()  # hard exit if running as root — no elevated privileges needed
+    refuse_root()
     app = CosmicSnipApp()
     app.run(sys.argv)
 
