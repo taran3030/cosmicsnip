@@ -1,67 +1,76 @@
 # CosmicSnip
 
-A Windows Snipping Tool clone built natively for **COSMIC Desktop** on Pop!_OS 24.04.
+Screenshot snipping tool with annotation for **COSMIC Desktop** on Pop!_OS 24.04.
 
-If you've switched from Windows and miss `Win+Shift+S`, this is it.
+The only capture + annotate tool that works natively on COSMIC's Wayland compositor.
 
 ---
 
-## What it does
+## Why CosmicSnip?
 
-Press a keyboard shortcut → your screen freezes with a dim overlay → drag to select any region across one or both monitors → an editor opens with your crop already copied to clipboard.
+COSMIC Desktop uses its own Wayland compositor, which breaks every existing screenshot tool:
 
-From there you can annotate with pen, highlighter, arrow, and rectangle tools, then copy or save.
+| Tool | Problem on COSMIC |
+|------|-------------------|
+| `grim` / `slurp` | Requires `wlr-screencopy` — COSMIC doesn't expose it |
+| `flameshot` | Crashes on COSMIC Wayland |
+| `gnome-screenshot` | No Wayland support, X11 only |
+| COSMIC built-in | Captures full screen only — no region select, no annotation |
 
-Annotations can extend outside the screenshot bounds — the output is auto-trimmed to content and saved as transparent PNG.
-
-## Why it exists
-
-No existing screenshot tool works well on COSMIC's Wayland compositor:
-
-- `grim` / `slurp` — require `wlr-screencopy`, which COSMIC does not expose
-- `flameshot` — broken on COSMIC Wayland
-- COSMIC's built-in screenshot — captures only, no selection overlay or annotation
-
-CosmicSnip uses the **XDG Desktop Portal** (via `cosmic-screenshot`) for capture, GTK4 + libadwaita for the UI, and Cairo for annotation rendering — the same stack COSMIC itself uses.
+CosmicSnip works because it uses the **XDG Desktop Portal** (`cosmic-screenshot`) for capture — the same protocol COSMIC itself uses. Everything else is native GTK4 + Cairo, no X11 compatibility layers.
 
 ---
 
 ## Features
 
-- Drag-to-select any region — works across multiple monitors
-- Annotation tools: pen, highlighter, arrow, rectangle
-- Colour palette + adjustable stroke width
-- Out-of-bounds drawing — annotate beyond the screenshot edge
-- Auto-copies to clipboard on capture
-- Transparent PNG output (auto-trimmed to content)
-- System tray icon — stays in the panel bar between snips
-- New Snip button (Ctrl+N) without restarting the app
-- Full undo support (Ctrl+Z)
-- Save As dialog (Ctrl+S)
-- Keyboard shortcuts: `P` `H` `A` `R` for tools, `Ctrl+C` `Ctrl+Z` `Ctrl+S` `Ctrl+N` `Ctrl+Q`
-- Logs to `~/.local/share/cosmicsnip/cosmicsnip.log`
+**Capture**
+- Drag-to-select any region across one or multiple monitors
+- Per-monitor fullscreen overlays via `gtk4-layer-shell`
+- Esc or right-click to cancel
 
----
+**Annotate**
+- Pen, highlighter, arrow, rectangle tools
+- 6-colour palette + adjustable stroke width
+- Draw beyond the screenshot edge — canvas extends past the image bounds
+- Full undo (Ctrl+Z, unlimited)
 
-## Requirements
+**Output**
+- Auto-copies to clipboard on capture (paste immediately)
+- Transparent PNG — annotations outside the image are on a transparent background
+- Auto-trims to content bounds (no wasted space)
+- Save As dialog with path control (Ctrl+S)
 
-- Pop!_OS 24.04 / Ubuntu 24.04 Noble with COSMIC Desktop
-- Wayland session
-- `cosmic-screenshot` (ships with Pop!_OS 24.04)
+**System integration**
+- System tray icon in COSMIC's panel bar
+- Stays alive between snips — re-activate from dock, tray, or Ctrl+N
+- Single-instance: launching again brings back the running app
+- Native libadwaita look matching COSMIC's dark theme
 
-All other dependencies are installed automatically.
+### Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `P` `H` `A` `R` | Switch tool (Pen / Highlighter / Arrow / Rectangle) |
+| `Ctrl+C` | Copy to clipboard (with annotations) |
+| `Ctrl+S` | Save as PNG |
+| `Ctrl+Z` | Undo |
+| `Ctrl+N` | New screenshot |
+| `Ctrl+Q` | Quit |
+| `Esc` | Close editor / cancel selection |
 
 ---
 
 ## Install
 
-Download the latest `.deb` from [Releases](https://github.com/taran3030/cosmicsnip/releases):
+### From .deb (recommended)
+
+Download from [Releases](https://github.com/taran3030/cosmicsnip/releases/latest):
 
 ```bash
 sudo apt install ./cosmicsnip_1.0.0-1_all.deb
 ```
 
-Or install from source:
+### From source
 
 ```bash
 git clone https://github.com/taran3030/cosmicsnip.git
@@ -69,12 +78,15 @@ cd cosmicsnip
 bash install.sh
 ```
 
-### Keyboard shortcut (recommended)
+### Set up a keyboard shortcut
 
 **COSMIC Settings → Keyboard → Custom Shortcuts → +**
-- Name: `CosmicSnip`
-- Command: `cosmicsnip`
-- Shortcut: `Super+Shift+S`
+
+| Field | Value |
+|-------|-------|
+| Name | CosmicSnip |
+| Command | `cosmicsnip` |
+| Shortcut | `Super+Shift+S` |
 
 ---
 
@@ -95,6 +107,8 @@ cd cosmicsnip
 sudo apt install ./dist/cosmicsnip_1.0.0-1_all.deb
 ```
 
+Build requires: `python3`, `dpkg-deb`
+
 ---
 
 ## Run without installing
@@ -107,16 +121,88 @@ python3 -m cosmicsnip.app
 
 ---
 
+## Security
+
+CosmicSnip is designed to handle screenshots safely. Screenshots are sensitive data — they can contain passwords, tokens, personal information.
+
+### What we do
+
+- **No root execution** — hard exit if run as root
+- **No network access** — nothing leaves your machine. No telemetry, no cloud, no updates phoning home
+- **Temp file hardening** — screenshots are written to `$XDG_RUNTIME_DIR/cosmicsnip/` with mode `0600`, owned by your user. Temp dir ownership is verified at startup
+- **Symlink attack prevention** — all file operations use `O_NOFOLLOW` and reject symlinks. Config files that are symlinks are refused
+- **Path traversal protection** — all paths are resolved and validated against allowed directories before any read/write
+- **TOCTOU-safe file operations** — chmod uses fd-based `fchmod()`, not path-based, to prevent race conditions
+- **PNG validation** — captured files are verified by magic bytes before processing
+- **PIL decompression bomb limit** — prevents memory exhaustion from malformed images
+- **Sandboxed XDG paths** — `XDG_RUNTIME_DIR`, `XDG_PICTURES_DIR` etc. are validated to be within `$HOME`, `/run`, or `/tmp`
+- **Save path restrictions** — blocks saving to system directories (`/etc`, `/usr`, `/bin`, `/proc`, etc.)
+- **Process umask `0077`** — all files created by the app are owner-only by default
+- **Log file permissions** — `0600`, rotated with 512KB limit
+- **Subprocess hardening** — `notify-send` calls are truncated and time-limited (5s)
+
+### What we don't do
+
+- We don't encrypt screenshots at rest. They're saved as standard PNGs in `~/Pictures/screenshots/`
+- We don't clear clipboard after a timeout. Your screenshot stays on the clipboard until you copy something else
+- We don't sandbox the Python process beyond standard user permissions
+
+### Reporting vulnerabilities
+
+If you find a security issue, please open a [GitHub issue](https://github.com/taran3030/cosmicsnip/issues) or email the maintainer directly. We take security seriously — this tool handles your screen content.
+
+---
+
 ## Tech stack
 
 | Component | Detail |
 |-----------|--------|
 | Capture | `cosmic-screenshot` via XDG Desktop Portal |
-| UI | GTK4 + libadwaita via PyGObject |
-| Drawing | Cairo 2D via pycairo |
+| UI | GTK4 + libadwaita (PyGObject) |
+| Drawing | Cairo 2D (pycairo) |
 | Clipboard | GTK4 native `Gdk.ContentProvider` |
+| Overlay | `gtk4-layer-shell` per-monitor surfaces |
 | Tray | DBus StatusNotifierItem protocol |
 | Packaging | dpkg `.deb` |
+| Language | Python 3.12 |
+
+---
+
+## Release history
+
+### v1.0.0 — 2026-03-16
+
+First stable release.
+
+- Libadwaita UI (Adw.ApplicationWindow, HeaderBar, ToastOverlay)
+- System tray icon via DBus StatusNotifierItem
+- App persistence — stays alive between snips
+- Out-of-bounds annotation with auto-trim transparent PNG output
+- Multi-monitor layer-shell overlays with shared selection state
+- Monitor detection with config caching
+- Multi-arch layer-shell support (x86_64, aarch64)
+
+### v0.2.0 — 2026-03-16
+
+Security hardening and multi-monitor support.
+
+- Per-monitor overlays via `gtk4-layer-shell`
+- TOCTOU fix in temp file chmod
+- PIL decompression bomb limit
+- Removed dead `wl-copy` code (GTK4 native clipboard)
+- Log/temp file permission hardening
+- Save path validation
+- XDG path sanitization
+
+### v0.1.0 — 2026-03-13
+
+Initial release.
+
+- Screen capture via `cosmic-screenshot`
+- Drag-to-select overlay
+- Annotation editor with pen, highlighter, arrow, rectangle
+- GTK4 native clipboard
+- Basic security (root refusal, symlink checks)
 
 ---
 
