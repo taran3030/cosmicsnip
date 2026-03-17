@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cosmicsnip"
-version = "0.1.0"
+version = "1.0.0"
 description = "A polished screenshot snipping tool for COSMIC Desktop / Wayland"
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [{ name = "itssoup" }]
 keywords = ["screenshot", "snipping-tool", "cosmic", "wayland", "gtk4"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Wayland",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
@@ -27,8 +27,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/itssoup/cosmicsnip"
-Issues = "https://github.com/itssoup/cosmicsnip/issues"
+Homepage = "https://github.com/taran3030/cosmicsnip"
+Issues = "https://github.com/taran3030/cosmicsnip/issues"
 
 [project.scripts]
 cosmicsnip = "cosmicsnip.app:main"

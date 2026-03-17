@@ -7,17 +7,17 @@
 #   ./build-deb.sh
 #
 # Output:
-#   dist/cosmicsnip_0.1.0-1_all.deb
+#   dist/cosmicsnip_1.0.0-1_all.deb
 #
 # Install with:
-#   sudo apt install ./dist/cosmicsnip_0.1.0-1_all.deb
+#   sudo apt install ./dist/cosmicsnip_1.0.0-1_all.deb
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="0.1.0"
+VERSION="1.0.0"
 PACKAGE="cosmicsnip"
 PKG_DIR="dist/${PACKAGE}_${VERSION}-1_all"
 
@@ -45,13 +45,23 @@ rm -rf "$PKG_DIR"
 SITE="$PKG_DIR/usr/lib/python3/dist-packages"
 mkdir -p "$SITE"
 cp -r cosmicsnip "$SITE/"
-find "$SITE/cosmicsnip" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find "$SITE/cosmicsnip" -name "*.pyc" -delete 2>/dev/null || true
+find "$SITE/cosmicsnip" \( -name "__pycache__" -type d -o -name "*.pyc" -o -name "*.pyo" \) -exec rm -rf {} + 2>/dev/null || true
 
 # Launcher script
 mkdir -p "$PKG_DIR/usr/bin"
 cat > "$PKG_DIR/usr/bin/cosmicsnip" << 'LAUNCHER'
 #!/bin/bash
+# Preload gtk4-layer-shell for per-monitor overlay support on Wayland.
+# Check both common lib paths for multi-arch compatibility.
+for lib in /usr/local/lib/x86_64-linux-gnu/libgtk4-layer-shell.so \
+           /usr/local/lib/aarch64-linux-gnu/libgtk4-layer-shell.so \
+           /usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so \
+           /usr/lib/aarch64-linux-gnu/libgtk4-layer-shell.so; do
+    if [ -f "$lib" ]; then
+        export LD_PRELOAD="${lib}${LD_PRELOAD:+:$LD_PRELOAD}"
+        break
+    fi
+done
 exec python3 -m cosmicsnip.app "$@"
 LAUNCHER
 chmod 755 "$PKG_DIR/usr/bin/cosmicsnip"
@@ -65,6 +75,11 @@ cp data/io.github.itssoup.CosmicSnip.desktop \
 mkdir -p "$PKG_DIR/usr/share/metainfo"
 cp data/io.github.itssoup.CosmicSnip.metainfo.xml \
    "$PKG_DIR/usr/share/metainfo/"
+
+# Application icon (scalable SVG)
+mkdir -p "$PKG_DIR/usr/share/icons/hicolor/scalable/apps"
+cp soupfi_icon_dark.svg \
+   "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/io.github.itssoup.CosmicSnip.svg"
 
 # Doc files
 mkdir -p "$PKG_DIR/usr/share/doc/$PACKAGE"
@@ -82,9 +97,9 @@ Version: ${VERSION}-1
 Section: graphics
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, python3-pil, python3-dbus, python3-cairo, wl-clipboard, libnotify-bin
+Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, python3-pil, python3-dbus, python3-cairo, libnotify-bin
 Maintainer: itssoup <itssoup@users.noreply.github.com>
-Homepage: https://github.com/itssoup/cosmicsnip
+Homepage: https://github.com/taran3030/cosmicsnip
 Description: Screenshot snipping tool for COSMIC Desktop / Wayland
  CosmicSnip is a Windows Snipping Tool clone for COSMIC Desktop (Pop!_OS 24.04).
  Captures the screen, lets you drag-select a region, and opens an editor with
@@ -98,6 +113,9 @@ cat > "$PKG_DIR/DEBIAN/postinst" << 'POSTINST'
 set -e
 if command -v update-desktop-database &>/dev/null; then
     update-desktop-database /usr/share/applications/ 2>/dev/null || true
+fi
+if command -v gtk-update-icon-cache &>/dev/null; then
+    gtk-update-icon-cache -f /usr/share/icons/hicolor/ 2>/dev/null || true
 fi
 POSTINST
 chmod 755 "$PKG_DIR/DEBIAN/postinst"

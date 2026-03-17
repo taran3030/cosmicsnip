@@ -10,7 +10,9 @@ If you've switched from Windows and miss `Win+Shift+S`, this is it.
 
 Press a keyboard shortcut → your screen freezes with a dim overlay → drag to select any region across one or both monitors → an editor opens with your crop already copied to clipboard.
 
-From there you can annotate with pen, highlighter, arrow, and rectangle tools, then paste or save.
+From there you can annotate with pen, highlighter, arrow, and rectangle tools, then copy or save.
+
+Annotations can extend outside the screenshot bounds — the output is auto-trimmed to content and saved as transparent PNG.
 
 ## Why it exists
 
@@ -20,21 +22,24 @@ No existing screenshot tool works well on COSMIC's Wayland compositor:
 - `flameshot` — broken on COSMIC Wayland
 - COSMIC's built-in screenshot — captures only, no selection overlay or annotation
 
-CosmicSnip uses the **XDG Desktop Portal** (via `cosmic-screenshot`) for capture, GTK4 for the UI, and Cairo for annotation rendering — the same stack COSMIC itself uses.
+CosmicSnip uses the **XDG Desktop Portal** (via `cosmic-screenshot`) for capture, GTK4 + libadwaita for the UI, and Cairo for annotation rendering — the same stack COSMIC itself uses.
 
 ---
 
 ## Features
 
-- Drag-to-select any region — works across multiple monitors in a single overlay
+- Drag-to-select any region — works across multiple monitors
 - Annotation tools: pen, highlighter, arrow, rectangle
 - Colour palette + adjustable stroke width
-- Auto-copies to clipboard on capture — paste immediately without opening the editor
-- Save As dialog with PNG output
-- New Snip button (Ctrl+N) to start a fresh capture without restarting the app
-- Full undo support
-- Keyboard shortcuts: `P` `H` `A` `R` for tools, `Ctrl+C` `Ctrl+Z` `Ctrl+S` `Ctrl+N`
-- Logs to `~/.local/share/cosmicsnip/cosmicsnip.log` for debugging
+- Out-of-bounds drawing — annotate beyond the screenshot edge
+- Auto-copies to clipboard on capture
+- Transparent PNG output (auto-trimmed to content)
+- System tray icon — stays in the panel bar between snips
+- New Snip button (Ctrl+N) without restarting the app
+- Full undo support (Ctrl+Z)
+- Save As dialog (Ctrl+S)
+- Keyboard shortcuts: `P` `H` `A` `R` for tools, `Ctrl+C` `Ctrl+Z` `Ctrl+S` `Ctrl+N` `Ctrl+Q`
+- Logs to `~/.local/share/cosmicsnip/cosmicsnip.log`
 
 ---
 
@@ -44,7 +49,7 @@ CosmicSnip uses the **XDG Desktop Portal** (via `cosmic-screenshot`) for capture
 - Wayland session
 - `cosmic-screenshot` (ships with Pop!_OS 24.04)
 
-All other dependencies are installed automatically with the `.deb`.
+All other dependencies are installed automatically.
 
 ---
 
@@ -53,12 +58,18 @@ All other dependencies are installed automatically with the `.deb`.
 Download the latest `.deb` from [Releases](https://github.com/taran3030/cosmicsnip/releases):
 
 ```bash
-sudo apt install ./cosmicsnip_0.1.0-1_all.deb
+sudo apt install ./cosmicsnip_1.0.0-1_all.deb
 ```
 
-### Keyboard shortcut
+Or install from source:
 
-Bind `cosmicsnip` to a shortcut in:
+```bash
+git clone https://github.com/taran3030/cosmicsnip.git
+cd cosmicsnip
+bash install.sh
+```
+
+### Keyboard shortcut (recommended)
 
 **COSMIC Settings → Keyboard → Custom Shortcuts → +**
 - Name: `CosmicSnip`
@@ -75,18 +86,13 @@ sudo apt remove cosmicsnip
 
 ---
 
-## Build from source
+## Build .deb from source
 
 ```bash
 git clone https://github.com/taran3030/cosmicsnip.git
 cd cosmicsnip
 ./build-deb.sh
-sudo apt install ./dist/cosmicsnip_0.1.0-1_all.deb
-```
-
-**Build dependencies:**
-```bash
-sudo apt install python3 dpkg
+sudo apt install ./dist/cosmicsnip_1.0.0-1_all.deb
 ```
 
 ---
@@ -94,10 +100,8 @@ sudo apt install python3 dpkg
 ## Run without installing
 
 ```bash
-git clone https://github.com/taran3030/cosmicsnip.git
-cd cosmicsnip
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
-                 python3-pil python3-dbus python3-cairo wl-clipboard libnotify-bin
+                 python3-pil python3-dbus python3-cairo libnotify-bin
 python3 -m cosmicsnip.app
 ```
 
@@ -107,19 +111,21 @@ python3 -m cosmicsnip.app
 
 | Component | Detail |
 |-----------|--------|
-| Capture | `cosmic-screenshot` → XDG Desktop Portal |
-| UI | GTK4 via PyGObject |
+| Capture | `cosmic-screenshot` via XDG Desktop Portal |
+| UI | GTK4 + libadwaita via PyGObject |
 | Drawing | Cairo 2D via pycairo |
-| Clipboard | GTK4 native (`Gdk.ContentProvider`) |
+| Clipboard | GTK4 native `Gdk.ContentProvider` |
+| Tray | DBus StatusNotifierItem protocol |
 | Packaging | dpkg `.deb` |
 
 ---
 
 ## Contributing
 
-Issues and pull requests welcome. If something is broken on your COSMIC setup, open an issue and include the log:
+Issues and PRs welcome. If something breaks on your COSMIC setup, open an issue with the log:
 
 ```bash
+cosmicsnip --debug
 cat ~/.local/share/cosmicsnip/cosmicsnip.log
 ```
 

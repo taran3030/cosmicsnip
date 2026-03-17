@@ -1,41 +1,11 @@
-"""
-Security hardening for CosmicSnip.
+"""Security hardening — path validation, symlink checks, root refusal.
 
-Attack surface and mitigations
-───────────────────────────────
-1. Root execution
-   Risk:  Any bug in this app becomes a privilege-escalation vector.
-   Fix:   refuse_root() — hard exit if UID == 0.
-
-2. Symlink attacks in temp directory
-   Risk:  Attacker pre-creates a symlink in TEMP_DIR pointing at a sensitive
-          file (e.g. /etc/shadow).  Our code follows it, chmod's it to 0600,
-          or reads/writes over it.
-   Fix:   check_no_symlink() before touching any discovered temp file.
-
-3. Path traversal
-   Risk:  A crafted filename could escape TEMP_DIR or SAVE_DIR
-          (e.g. "../../.ssh/authorized_keys").
-   Fix:   validate_path_within() resolves and checks relative_to().
-
-4. Malformed / weaponised image files
-   Risk:  A crafted PNG in TEMP_DIR triggers a Pillow or GdkPixbuf exploit
-          before dimensions are checked.
-   Fix:   validate_png_magic() checks the 8-byte PNG signature first.
-
-5. Subprocess injection
-   Risk:  Shell injection via user-controlled data passed to subprocess.
-   Fix:   All subprocess calls use argument lists (no shell=True).  No
-          user-controlled data ever reaches a subprocess argument.
-          Enforced by audit — no changes needed here.
-
-6. Unbounded memory
-   Risk:  Oversized image causes OOM; unbounded annotation list grows forever.
-   Fix:   MAX_IMAGE_WIDTH/HEIGHT in config (enforced in capture.py).
-          MAX_UNDO_HISTORY in config (enforced in editor.py).
+Covers: root execution prevention, symlink attacks in temp dirs,
+path traversal, malformed PNGs, and TOCTOU-safe file operations.
 """
 
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -43,74 +13,85 @@ from cosmicsnip.log import get_logger
 
 log = get_logger("security")
 
-# PNG file signature — first 8 bytes of every valid PNG.
 _PNG_MAGIC = b'\x89PNG\r\n\x1a\n'
 
 
 def refuse_root() -> None:
-    """
-    Immediately exit if the process is running as root (UID 0).
-
-    This app captures screens and writes to the user's home directory.
-    It requires zero elevated privileges.  Running as root turns any
-    future bug into a potential privilege escalation.
-    """
+    """Hard exit if running as root. This app needs zero privileges."""
     if os.getuid() == 0:
-        log.critical(
-            "CosmicSnip refuses to run as root.  "
-            "Launch it as a normal user — no sudo or root shell."
-        )
+        log.critical("CosmicSnip refuses to run as root.")
         sys.exit(1)
     log.debug("UID check passed: running as uid=%d", os.getuid())
 
 
 def validate_path_within(path: str | Path, allowed_dir: str | Path) -> Path:
-    """
-    Resolve *path* and confirm it lives inside *allowed_dir*.
-
-    Raises ValueError if the resolved path escapes the allowed directory.
-    Returns the resolved Path on success.
-    """
+    """Resolve path and confirm it's inside allowed_dir. Raises ValueError."""
     resolved = Path(path).resolve()
-    allowed  = Path(allowed_dir).resolve()
+    allowed = Path(allowed_dir).resolve()
     try:
         resolved.relative_to(allowed)
     except ValueError:
-        raise ValueError(
-            f"Path traversal blocked: '{resolved}' is outside '{allowed}'"
-        )
+        raise ValueError(f"Path traversal blocked: '{resolved}' outside '{allowed}'")
     log.debug("Path OK: %s is within %s", resolved, allowed)
     return resolved
 
 
 def check_no_symlink(path: str | Path) -> None:
-    """
-    Raise ValueError if *path* is a symbolic link.
-
-    Prevents symlink-swap attacks where an attacker replaces a temp file
-    with a symlink to a sensitive target before we chmod or read it.
-    """
+    """Raise ValueError if path is a symlink."""
     if Path(path).is_symlink():
-        raise ValueError(f"Symlink rejected (possible attack): {path}")
+        raise ValueError(f"Symlink rejected: {path}")
     log.debug("Symlink check passed: %s", path)
 
 
 def validate_png_magic(path: str | Path) -> None:
-    """
-    Raise ValueError if the file at *path* does not begin with the 8-byte
-    PNG magic number.
-
-    Catches obviously wrong file types before handing them to Pillow or
-    GdkPixbuf, reducing the risk of triggering image-decoder exploits.
-    """
+    """Raise ValueError if the file doesn't start with PNG magic bytes."""
     try:
         with open(path, 'rb') as fh:
             header = fh.read(8)
     except OSError as exc:
-        raise ValueError(f"Cannot read file for magic check: {path}: {exc}") from exc
-
+        raise ValueError(f"Cannot read {path}: {exc}") from exc
     if header != _PNG_MAGIC:
-        raise ValueError(
-            f"File rejected — not a valid PNG (bad magic bytes): {path}"
-        )
+        raise ValueError(f"Not a valid PNG: {path}")
     log.debug("PNG magic OK: %s", path)
+
+
+def open_no_follow(path: str | Path) -> int:
+    """Open with O_NOFOLLOW | O_RDONLY. Returns fd (caller must close)."""
+    try:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        if exc.errno == 40:  # ELOOP
+            raise ValueError(f"Symlink rejected: {path}") from exc
+        raise ValueError(f"Cannot open {path}: {exc}") from exc
+
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        os.close(fd)
+        raise ValueError(f"Not a regular file (mode={oct(st.st_mode)}): {path}")
+    return fd
+
+
+def fchmod_safe(fd: int, mode: int) -> None:
+    """chmod via fd — immune to TOCTOU symlink swaps."""
+    os.fchmod(fd, mode)
+
+
+def validate_png_magic_fd(fd: int, path: str | Path) -> None:
+    """Check PNG magic bytes from an open fd. Resets position after."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    header = os.read(fd, 8)
+    if header != _PNG_MAGIC:
+        raise ValueError(f"Not a valid PNG: {path}")
+    os.lseek(fd, 0, os.SEEK_SET)
+
+
+def verify_dir_ownership(dir_path: Path) -> None:
+    """Verify directory is owned by current user and isn't a symlink."""
+    p = Path(dir_path)
+    st = p.lstat()
+    if stat.S_ISLNK(st.st_mode):
+        raise ValueError(f"Directory is a symlink: {dir_path}")
+    if not stat.S_ISDIR(st.st_mode):
+        raise ValueError(f"Not a directory: {dir_path}")
+    if st.st_uid != os.getuid():
+        raise ValueError(f"Owned by uid={st.st_uid}, expected {os.getuid()}: {dir_path}")

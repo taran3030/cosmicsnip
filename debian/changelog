@@ -1,3 +1,37 @@
+cosmicsnip (1.0.0-1) noble; urgency=medium
+
+  * First stable release.
+  * Libadwaita UI — HeaderBar, ToolbarView, ToastOverlay.
+  * System tray icon via DBus StatusNotifierItem (COSMIC panel bar).
+  * App stays alive between snips — re-activate from dock or tray.
+  * Out-of-bounds annotation: canvas scales to fit with 25% margin,
+    annotations can extend past the screenshot edge.
+  * Copy/save renders as transparent PNG, auto-trimmed to content bounds.
+  * Multi-monitor layer-shell overlays with shared selection state.
+  * Ctrl+N for new snip, Ctrl+Q to quit, Esc to close editor.
+
+ -- itssoup <itssoup@users.noreply.github.com>  Sun, 16 Mar 2026 22:00:00 +0000
+
+cosmicsnip (0.2.0-1) noble; urgency=medium
+
+  * Multi-monitor support via wlr-layer-shell (per-monitor native overlays)
+  * Monitor config file at ~/.config/cosmicsnip/monitors.json
+  * App icon (soupfi_icon_dark.svg) installed to hicolor icon theme
+  * Editor toolbar migrated to Gtk.HeaderBar
+  * Updated CSS to match COSMIC dark glass aesthetic
+  * CRITICAL: Fixed TOCTOU race condition in temp file chmod
+  * Removed dead wl-copy clipboard code (now uses GTK4 native clipboard)
+  * Added PIL decompression bomb limit
+  * Hardened log file permissions (0600)
+  * Added temp directory ownership verification
+  * Added save path validation (blocks writes to system directories)
+  * Sanitized XDG environment variable paths
+  * Hardened notification subprocess (truncation + timeout)
+  * Added per-stroke point cap (10000 points)
+  * Set process umask 0077 at startup
+
+ -- itssoup <itssoup@users.noreply.github.com>  Sun, 16 Mar 2026 00:00:00 +0000
+
 cosmicsnip (0.1.0-1) noble; urgency=low
 
   * Initial release.

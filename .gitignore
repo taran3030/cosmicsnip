@@ -18,5 +18,7 @@ venv/
 CLAUDE.md
 CONTRIBUTING.md
 SECURITY.md
+COSMICSNIP_V020_MASTER_PLAN.md
+test_layershell.py
 key.txt
 key.txt.pub
