@@ -38,12 +38,13 @@ class CosmicSnipApp(Adw.Application):
     Ctrl+Q: quit for real.
     """
 
-    def __init__(self):
+    def __init__(self, tray_only=False):
         super().__init__(application_id=__app_id__)
         self._css_loaded = False
         self._overlay = None
         self._held = False
         self._tray = None
+        self._tray_only = tray_only
         self.connect("activate", self._on_activate)
 
     def _on_activate(self, _app):
@@ -55,7 +56,6 @@ class CosmicSnipApp(Adw.Application):
         if not self._held:
             self.hold()
             self._held = True
-            # Register tray icon on first activation
             self._tray = TrayIcon(app=self, on_activate=self._start_capture)
             self._tray.register()
 
@@ -68,9 +68,20 @@ class CosmicSnipApp(Adw.Application):
             )
             self._css_loaded = True
 
+        # --tray: first launch sits idle with tray icon only
+        if self._tray_only:
+            log.info("Started in tray-only mode — waiting for activation.")
+            self._tray_only = False  # subsequent activations start capture
+            return
+
         self._start_capture()
 
     def _start_capture(self):
+        # Clean up any existing overlay before starting a new one
+        if self._overlay:
+            self._overlay.hide_all()
+            self._overlay = None
+
         log.info("Starting screen capture...")
         try:
             image_path = capture_screen()
@@ -132,6 +143,8 @@ class CosmicSnipApp(Adw.Application):
     def _on_cancelled(self):
         """Selection cancelled — go idle, don't quit. App stays in dock."""
         log.info("Selection cancelled — waiting in background.")
+        if self._overlay:
+            self._overlay.hide_all()
         self._overlay = None
 
     def _show_error(self, message):
@@ -188,8 +201,9 @@ def main():
     os.umask(0o077)
     setup_logging(debug="--debug" in sys.argv)
     refuse_root()
-    gtk_argv = [a for a in sys.argv if a != "--debug"]
-    app = CosmicSnipApp()
+    tray_only = "--tray" in sys.argv
+    gtk_argv = [a for a in sys.argv if a not in ("--debug", "--tray")]
+    app = CosmicSnipApp(tray_only=tray_only)
     app.run(gtk_argv)
 
 

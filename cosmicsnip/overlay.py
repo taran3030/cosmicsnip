@@ -352,6 +352,7 @@ class OverlayController:
 
     def cancel(self):
         self._release_keyboard()
+        self.hide_all()
         self._on_cancelled()
 
 
@@ -496,8 +497,12 @@ class FallbackOverlay(Gtk.Window):
             self.close()
             self._on_selected(self._image_path, ix1, iy1, ix2, iy2)
 
+    def hide_all(self):
+        """Match OverlayController's API — hide without destroying."""
+        self.set_opacity(0)
+
     def _cancel(self):
-        self.close()
+        self.hide_all()
         self._on_cancelled()
 
     def _on_key(self, _ctl, keyval, _kc, _st):
