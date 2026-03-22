@@ -138,6 +138,7 @@ class MonitorOverlay(Gtk.Window):
                 LayerShell.init_for_window(self)
                 LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
                 LayerShell.set_namespace(self, "cosmicsnip-overlay")
+                LayerShell.set_exclusive_zone(self, -1)
                 for edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM,
                              LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
                     LayerShell.set_anchor(self, edge, True)
@@ -330,24 +331,22 @@ class OverlayController:
                     pass
 
     def hide_all(self):
-        """Dismiss and destroy overlay windows.
-
-        Steps: release keyboard → move to BACKGROUND layer → make transparent
-        → schedule destroy. The app stays alive via hold() + tray icon, so
-        destroying surfaces won't drop the Wayland connection.
-        """
+        """Dismiss overlay windows — blank canvas, drop to background, go transparent."""
         self._release_keyboard()
         for ov in self._overlays:
+            # Blank the pixbuf so it doesn't paint stale content
+            ov._local_pixbuf = GdkPixbuf.Pixbuf.new(
+                GdkPixbuf.Colorspace.RGB, True, 8, 1, 1)
+            ov._local_pixbuf.fill(0x00000000)
+            ov._canvas.queue_draw()
             if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
                 try:
                     LayerShell.set_layer(ov, LayerShell.Layer.BACKGROUND)
+                    LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.NONE)
                 except Exception:
                     pass
             ov.set_opacity(0)
-            # Destroy after a short delay so the compositor processes the hide
-            GLib.timeout_add(200, ov.destroy)
-        self._overlays.clear()
-        log.info("Overlays dismissed and scheduled for destroy.")
+        log.info("Overlays dismissed (%d windows).", len(self._overlays))
 
     def finalise(self):
         x1, y1, x2, y2 = self._state.rect()
@@ -505,8 +504,9 @@ class FallbackOverlay(Gtk.Window):
 
     def hide_all(self):
         """Match OverlayController's API."""
+        self._display_pixbuf = None
+        self._canvas.queue_draw()
         self.set_opacity(0)
-        GLib.timeout_add(200, self.destroy)
 
     def _cancel(self):
         self.hide_all()

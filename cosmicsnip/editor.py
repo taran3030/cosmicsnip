@@ -156,11 +156,14 @@ class SnipEditor(Adw.ApplicationWindow):
             inner.append(Gtk.Label(label=tdef.label))
             btn.set_child(inner)
             btn.set_tooltip_text(tdef.tooltip)
-            btn.connect("toggled", self._on_tool_toggled, tdef.tool_id)
             if tdef.tool_id == self._active_tool:
                 btn.set_active(True)
             tool_box.append(btn)
             self._tool_buttons[tdef.tool_id] = btn
+        # Connect signals after all widgets exist to avoid early callbacks
+        for tdef in TOOLS:
+            self._tool_buttons[tdef.tool_id].connect(
+                "toggled", self._on_tool_toggled, tdef.tool_id)
         header.pack_start(tool_box)
 
         # Separator
