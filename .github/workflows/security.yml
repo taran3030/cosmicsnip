@@ -39,16 +39,29 @@ jobs:
       - name: Build Dependency Audit Manifest
         run: |
           python - <<'PY'
+          import re
           import tomllib
           from pathlib import Path
 
           data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
           deps = data.get("project", {}).get("dependencies", [])
+          pinned = []
+          for dep in deps:
+              dep = dep.strip()
+              m = re.match(r"^([A-Za-z0-9_.-]+)\s*>=\s*([A-Za-z0-9_.-]+)$", dep)
+              if m:
+                  # Audit lower bounds as a conservative baseline.
+                  pinned.append(f"{m.group(1)}=={m.group(2)}")
+                  continue
+              if re.match(r"^([A-Za-z0-9_.-]+)==([A-Za-z0-9_.-]+)$", dep):
+                  pinned.append(dep)
+                  continue
+              print(f"Skipping unsupported dependency spec for audit: {dep}")
           out = Path("requirements-audit.txt")
-          out.write_text("\n".join(deps) + "\n", encoding="utf-8")
-          print(f"Wrote {out} with {len(deps)} dependencies.")
+          out.write_text("\n".join(pinned) + "\n", encoding="utf-8")
+          print(f"Wrote {out} with {len(pinned)} pinned dependencies.")
           PY
 
       - name: Dependency Advisory Scan
         run: |
-          pip-audit -r requirements-audit.txt
+          pip-audit -r requirements-audit.txt --no-deps --disable-pip

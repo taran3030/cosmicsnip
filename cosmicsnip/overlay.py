@@ -12,6 +12,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_foreign("cairo")
 
+import cairo
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 from typing import Callable
 
@@ -23,6 +24,13 @@ from cosmicsnip.config import (
 )
 
 log = get_logger("overlay")
+SIZE_LABEL_FONT_SIZE = 12
+SIZE_LABEL_Y_OFFSET = 8
+SIZE_LABEL_BOTTOM_MARGIN = 28
+SIZE_LABEL_PADDING_X = 8
+SIZE_LABEL_BOX_HEIGHT = 24
+SIZE_LABEL_BASELINE = 17
+FALLBACK_MAP_RETRY_MS = 50
 
 # ── Layer-shell setup ────────────────────────────────────────────────────────
 
@@ -56,7 +64,7 @@ def _check_layer_shell():
             log.info("gtk4-layer-shell ready (protocol v%d).", _LS.get_protocol_version())
         else:
             # COSMIC may report False but still work
-            log.warning("is_supported() False — trying anyway on COSMIC.")
+            log.warning("gtk4-layer-shell reports unsupported, proceeding (expected on COSMIC).")
             LayerShell = _LS
             _LAYER_SHELL_AVAILABLE = True
     except Exception as exc:
@@ -103,7 +111,7 @@ class SelectionState:
 # ── Per-monitor overlay window ───────────────────────────────────────────────
 
 class MonitorOverlay(Gtk.Window):
-    """Layer-shell fullscreen overlay for one monitor."""
+    """Layer-shell window covering a single monitor for region selection."""
 
     def __init__(self, app, monitor_info, pixbuf, state, controller,
                  origin_x=0, origin_y=0):
@@ -187,7 +195,7 @@ class MonitorOverlay(Gtk.Window):
         self.add_controller(key_ctl)
 
     def _load_local_pixbuf(self, pixbuf, monitor_info, origin_x, origin_y):
-        """Update monitor mapping and crop this monitor's slice from combined image."""
+        """Load and cache a GdkPixbuf from the capture file for this monitor's region."""
         self._info = monitor_info
         self._px = monitor_info.x - origin_x
         self._py = monitor_info.y - origin_y
@@ -221,28 +229,30 @@ class MonitorOverlay(Gtk.Window):
                 gdk_mon = get_gdk_monitor(monitor_info.gdk_index)
                 if gdk_mon:
                     LayerShell.set_monitor(self, gdk_mon)
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Layer-shell refresh monitor bind failed: %s", exc)
         self._canvas.queue_draw()
 
     # ── Coordinate mapping ───────────────────────────────────────────────
 
     def _canvas_to_image(self, cx, cy):
+        """Convert canvas-local pixel coordinates to full-image coordinates."""
         return (int(max(0, min(cx, self._local_w - 1))) + self._px,
                 int(max(0, min(cy, self._local_h - 1))) + self._py)
 
     def _image_to_canvas(self, ix, iy):
+        """Convert full-image coordinates to canvas-local pixel coordinates."""
         return float(ix - self._px), float(iy - self._py)
 
     # ── Drawing ──────────────────────────────────────────────────────────
 
     def _draw(self, _area, cr, w, h):
+        """Cairo draw handler: renders capture image, dim overlay, and selection rectangle."""
         if self._is_hidden:
             cr.set_source_rgba(0, 0, 0, 0)
-            cr.set_operator(1)  # CAIRO_OPERATOR_SOURCE
+            cr.set_operator(cairo.OPERATOR_SOURCE)
             cr.paint()
             return
-        # Base image + dim overlay
         cr.set_source_rgb(0, 0, 0)
         cr.paint()
         Gdk.cairo_set_source_pixbuf(cr, self._local_pixbuf, 0, 0)
@@ -254,7 +264,6 @@ class MonitorOverlay(Gtk.Window):
         if not self._state.has_selection:
             return
 
-        # Clear selection area (show original brightness)
         x1, y1, x2, y2 = self._state.rect()
         lx1, ly1 = self._image_to_canvas(x1, y1)
         lx2, ly2 = self._image_to_canvas(x2, y2)
@@ -273,26 +282,26 @@ class MonitorOverlay(Gtk.Window):
         cr.paint()
         cr.restore()
 
-        # Selection border
         r, g, b, a = SELECTION_BORDER_COLOR
         cr.set_source_rgba(r, g, b, a)
         cr.set_line_width(SELECTION_BORDER_WIDTH)
         cr.rectangle(lx1, ly1, sw, sh)
         cr.stroke()
 
-        # Size label (only on the monitor where the drag ends)
         end_here = (self._px <= self._state.ex < self._px + self._info.width and
                     self._py <= self._state.ey < self._py + self._info.height)
         if end_here:
             dim = f"{x2 - x1} × {y2 - y1}"
-            cr.set_font_size(12)
+            # Match the editor/status typography for quick visual parsing.
+            cr.set_font_size(SIZE_LABEL_FONT_SIZE)
             ext = cr.text_extents(dim)
-            bx, by = lx1, min(ly2 + 8, h - 28)
+            # Keep badge adjacent to selection while preventing bottom clipping.
+            bx, by = lx1, min(ly2 + SIZE_LABEL_Y_OFFSET, h - SIZE_LABEL_BOTTOM_MARGIN)
             cr.set_source_rgba(0, 0, 0, 0.8)
-            cr.rectangle(bx, by, ext.width + 16, 24)
+            cr.rectangle(bx, by, ext.width + (SIZE_LABEL_PADDING_X * 2), SIZE_LABEL_BOX_HEIGHT)
             cr.fill()
             cr.set_source_rgba(1, 1, 1, 1)
-            cr.move_to(bx + 8, by + 17)
+            cr.move_to(bx + SIZE_LABEL_PADDING_X, by + SIZE_LABEL_BASELINE)
             cr.show_text(dim)
 
     # ── Input handlers ───────────────────────────────────────────────────
@@ -417,8 +426,8 @@ class OverlayController:
                 try:
                     LayerShell.set_layer(ov, LayerShell.Layer.BACKGROUND)
                     LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.NONE)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Layer-shell background demote failed: %s", exc)
             ov.set_opacity(0)
 
         log.info(
@@ -451,8 +460,8 @@ class OverlayController:
             if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
                 try:
                     LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.NONE)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Layer-shell keyboard release failed: %s", exc)
 
     def hide_all(self):
         """Dismiss overlay windows — mark hidden, repaint transparent, drop layer."""
@@ -464,8 +473,8 @@ class OverlayController:
             if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
                 try:
                     LayerShell.set_layer(ov, LayerShell.Layer.BACKGROUND)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Layer-shell hide transition failed: %s", exc)
             ov.set_opacity(0)
         log.info("Overlays dismissed (active=%d, pooled=%d).", self._active_count, len(self._overlays))
 
@@ -544,7 +553,8 @@ class FallbackOverlay(Gtk.Window):
         alloc = self._canvas.get_allocation()
         cw, ch = alloc.width, alloc.height
         if cw <= 0 or ch <= 0:
-            GLib.timeout_add(50, self._build_display_cache)
+            # Allow the layer-shell window one extra compositor frame to map.
+            GLib.timeout_add(FALLBACK_MAP_RETRY_MS, self._build_display_cache)
             return GLib.SOURCE_REMOVE
         scale = min(cw / self._img_w, ch / self._img_h)
         dw, dh = int(self._img_w * scale), int(self._img_h * scale)

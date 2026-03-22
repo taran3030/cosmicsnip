@@ -11,9 +11,10 @@ import time
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
+gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Gtk, Gdk, GLib, Adw
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Adw
 
 from cosmicsnip import __app_id__
 from cosmicsnip.log import setup_logging, get_logger
@@ -24,8 +25,6 @@ from cosmicsnip.overlay import SelectionOverlay
 from cosmicsnip.monitors import get_monitors
 from cosmicsnip.editor import SnipEditor
 from cosmicsnip.tray import TrayIcon
-
-from PIL import Image
 
 log = get_logger("app")
 
@@ -121,13 +120,18 @@ class CosmicSnipApp(Adw.Application):
         log.info("Region selected: (%d,%d)→(%d,%d)  size=%dx%d",
                  x1, y1, x2, y2, x2 - x1, y2 - y1)
         try:
-            img = Image.open(image_path)
-            cropped = img.crop((x1, y1, x2, y2))
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+            img_w, img_h = pixbuf.get_width(), pixbuf.get_height()
+            cx1 = max(0, min(x1, img_w - 1))
+            cy1 = max(0, min(y1, img_h - 1))
+            cx2 = max(cx1 + 1, min(x2, img_w))
+            cy2 = max(cy1 + 1, min(y2, img_h))
+            cropped = pixbuf.new_subpixbuf(cx1, cy1, cx2 - cx1, cy2 - cy1)
 
             ts = time.strftime("%Y%m%d-%H%M%S")
             crop_path = str(SAVE_DIR / f"snip-{ts}.png")
             validate_path_within(crop_path, SAVE_DIR)
-            cropped.save(crop_path, "PNG")
+            cropped.savev(crop_path, "png", [], [])
             log.info("Cropped image saved: %s", crop_path)
             cleanup_file(image_path)
 
@@ -192,7 +196,7 @@ def _ensure_layer_shell_preload():
     if not lib:
         return
     os.environ["LD_PRELOAD"] = f"{lib}:{current}" if current else lib
-    os.execv(sys.executable, [sys.executable, "-m", "cosmicsnip.app"] +
+    os.execv(sys.executable, [sys.executable, "-m", "cosmicsnip.app"] +  # nosec B606
              [a for a in sys.argv[1:] if a != sys.argv[0]])
 
 

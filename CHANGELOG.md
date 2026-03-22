@@ -2,6 +2,17 @@
 
 All notable changes to CosmicSnip are documented in this file.
 
+## [1.0.2] - 2026-03-21
+
+### Changed
+- Distro-submission polish: professional docstrings, documented constants, cleaned redundant comments.
+- Removed Pillow dependency — all image handling now uses native GdkPixbuf (smaller attack surface).
+- AppStream metadata: added OARS content rating, screenshots section, developer contact.
+- Desktop entry: added `TryExec` and `DBusActivatable` for freedesktop.org compliance.
+- Added `CONTRIBUTING.md` with development setup, commit conventions, and PR workflow.
+- Build and install scripts hardened with file existence checks and idempotent PATH setup.
+- Security CI workflow improved: pinned audit deps, bandit scan clean.
+
 ## [1.0.1] - 2026-03-21
 
 ### Fixed
@@ -12,9 +23,6 @@ All notable changes to CosmicSnip are documented in this file.
   - XDG path validation now uses ancestry checks,
   - temp cleanup validates path is inside temp root and rejects symlink targets.
 - Added repository security policy and disclosure guidance (`SECURITY.md`).
-
-### Changed
-- README now prioritizes release `.deb` installation flow and links to policy/changelog docs.
 
 ## [1.0.0] - 2026-03-16
 

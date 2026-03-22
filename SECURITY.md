@@ -10,6 +10,8 @@ Security is treated as a core feature, not a best-effort add-on.
 | 1.0.x | Yes |
 | < 1.0.0 | No |
 
+Supported means security patches and critical bug fixes.
+
 ## Reporting a Vulnerability
 
 Please do **not** open public issues for security bugs.

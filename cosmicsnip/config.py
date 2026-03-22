@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -9,6 +10,7 @@ from cosmicsnip.log import get_logger
 from cosmicsnip.security import verify_dir_ownership
 
 log = get_logger("config")
+_SYSTEM_TMP = Path(tempfile.gettempdir()).resolve()
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -19,7 +21,7 @@ def _xdg_path(env_var: str, default: Path) -> Path:
     if raw is None:
         return default
     resolved = Path(raw).resolve()
-    allowed_roots = (Path.home().resolve(), Path("/run"), Path("/tmp"))
+    allowed_roots = (Path.home().resolve(), Path("/run"), _SYSTEM_TMP)
     for root in allowed_roots:
         if resolved == root:
             return resolved
@@ -34,7 +36,7 @@ def _xdg_path(env_var: str, default: Path) -> Path:
 _XDG_PICTURES = _xdg_path("XDG_PICTURES_DIR", Path.home() / "Pictures")
 SAVE_DIR: Path = _XDG_PICTURES / "screenshots"
 
-_XDG_RUNTIME = _xdg_path("XDG_RUNTIME_DIR", Path("/tmp"))
+_XDG_RUNTIME = _xdg_path("XDG_RUNTIME_DIR", _SYSTEM_TMP)
 TEMP_DIR: Path = _XDG_RUNTIME / "cosmicsnip"
 
 # ── Limits ───────────────────────────────────────────────────────────────────

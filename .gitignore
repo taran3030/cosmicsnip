@@ -7,6 +7,7 @@ build/
 .eggs/
 *.egg
 .venv/
+.venv-audit/
 venv/
 .env
 *.swp
@@ -16,7 +17,6 @@ venv/
 .vscode/
 *.log
 CLAUDE.md
-CONTRIBUTING.md
 COSMICSNIP_V020_MASTER_PLAN.md
 AUDIT_PROPOSAL.md
 REAUDIT_*.md
@@ -25,4 +25,5 @@ test_layershell.py
 key.txt
 key.txt.pub
 CLAUDE_DEPLOY_HANDOFF.md
+CODEX_AUDIT_V101.md
 requirements-audit.txt

@@ -30,8 +30,16 @@ from cosmicsnip.security import is_save_path_blocked
 
 log = get_logger("editor")
 
+DEFAULT_WINDOW_MAX_W = 1400
+DEFAULT_WINDOW_MAX_H = 900
+PEN_WIDTH_MIN = 1
+PEN_WIDTH_MAX = 20
+HIGHLIGHT_WIDTH_MIN = 4
+HIGHLIGHT_WIDTH_MAX = 60
+
 
 class SnipEditor(Adw.ApplicationWindow):
+    """Annotation editor window for a captured screenshot region."""
 
     def __init__(self, app, image_path: str):
         super().__init__(application=app, title="CosmicSnip")
@@ -51,7 +59,8 @@ class SnipEditor(Adw.ApplicationWindow):
         # Size to 80% of largest monitor
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
-        max_w, max_h = 1400, 900
+        # Baseline fits comfortably on 1080p while leaving room for shell panels.
+        max_w, max_h = DEFAULT_WINDOW_MAX_W, DEFAULT_WINDOW_MAX_H
         for i in range(monitors.get_n_items()):
             mon = monitors.get_item(i)
             geom = mon.get_geometry()
@@ -313,13 +322,11 @@ class SnipEditor(Adw.ApplicationWindow):
         Gdk.cairo_set_source_pixbuf(cr, self._pixbuf, mx, my)
         cr.paint()
 
-        # Thin border around the image
         cr.set_source_rgba(0.4, 0.4, 0.4, 0.5)
         cr.set_line_width(1.0 / self._scale)  # 1px regardless of zoom
         cr.rectangle(mx - 0.5, my - 0.5, self._img_w + 1, self._img_h + 1)
         cr.stroke()
 
-        # Annotations (stored in canvas coords)
         for ann in self._annotations:
             _render_annotation(cr, ann)
         if self._drawing:
@@ -411,9 +418,14 @@ class SnipEditor(Adw.ApplicationWindow):
 
     def _adjust_width(self, delta):
         if self._active_tool == "highlighter":
-            self._highlight_width = max(4, min(60, self._highlight_width + delta * 2))
+            # Wide range keeps marker readable on large captures.
+            self._highlight_width = max(
+                HIGHLIGHT_WIDTH_MIN,
+                min(HIGHLIGHT_WIDTH_MAX, self._highlight_width + delta * 2),
+            )
         else:
-            self._pen_width = max(1, min(20, self._pen_width + delta))
+            # Pen remains precise while still allowing bold callouts.
+            self._pen_width = max(PEN_WIDTH_MIN, min(PEN_WIDTH_MAX, self._pen_width + delta))
         self._update_width_display()
 
     def _update_width_display(self):
@@ -436,6 +448,7 @@ class SnipEditor(Adw.ApplicationWindow):
     # ── Actions ──────────────────────────────────────────────────────────
 
     def _undo(self):
+        """Revert the last annotation stroke."""
         if self._annotations:
             self._annotations.pop()
             self._canvas.queue_draw()
@@ -450,6 +463,7 @@ class SnipEditor(Adw.ApplicationWindow):
         GLib.idle_add(self._restart_capture)
 
     def _restart_capture(self):
+        """Close editor and start a new screen capture."""
         self._app.activate()
         GLib.timeout_add(500, self._deferred_close)
 
@@ -523,6 +537,7 @@ class SnipEditor(Adw.ApplicationWindow):
         return surface
 
     def _copy_to_clipboard(self):
+        """Render annotations onto the image and copy the result as PNG to clipboard."""
         try:
             surface = self._render_to_surface()
             sw, sh = surface.get_width(), surface.get_height()
@@ -538,6 +553,7 @@ class SnipEditor(Adw.ApplicationWindow):
             self._toast(f"Copy failed: {exc}")
 
     def _save_as_dialog(self):
+        """Open a Save As file chooser for the annotated screenshot."""
         ts = time.strftime("%Y%m%d-%H%M%S")
         dialog = Gtk.FileDialog()
         dialog.set_title("Save Screenshot As")
@@ -555,6 +571,7 @@ class SnipEditor(Adw.ApplicationWindow):
         dialog.save(self, None, self._on_save_response)
 
     def _on_save_response(self, dialog, result):
+        """Handle the file chooser result and write the PNG."""
         try:
             file = dialog.save_finish(result)
         except GLib.GError:
@@ -586,6 +603,7 @@ class SnipEditor(Adw.ApplicationWindow):
     # ── Keyboard shortcuts ───────────────────────────────────────────────
 
     def _on_key(self, _ctl, keyval, _keycode, state):
+        """Global key event handler for editor shortcuts."""
         ctrl = state & Gdk.ModifierType.CONTROL_MASK
         if keyval == Gdk.KEY_Escape:
             self.close()
@@ -617,6 +635,7 @@ class SnipEditor(Adw.ApplicationWindow):
 # ── Annotation renderer ──────────────────────────────────────────────────────
 
 def _render_annotation(cr, ann: dict) -> None:
+    """Draw a single annotation dict onto a Cairo context."""
     atype = ann.get("type")
     color = ann.get("color", (1, 0, 0, 1))
     width = ann.get("width", 3)

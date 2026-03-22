@@ -1,9 +1,9 @@
 # CosmicSnip — Architecture & Current State
 
-> Complete technical reference for the codebase. Intended for AI agents (Codex, Claude, etc.)
-> and contributors who need to understand how every piece fits together.
+> Complete technical reference for the codebase. Intended for contributors and
+> maintainers who need to understand how every piece fits together.
 >
-> **Last updated:** 2026-03-21 · **Version:** 1.0.1
+> **Last updated:** 2026-03-21 · **Version:** 1.0.2
 
 ---
 
@@ -13,7 +13,7 @@
 2. [Use Cases & User Flows](#2-use-cases--user-flows)
 3. [Module Reference](#3-module-reference)
 4. [Signal & Callback Chains](#4-signal--callback-chains)
-5. [Code Reference Index](#5-code-reference-index)
+5. [Code Navigation Index](#5-code-navigation-index)
 6. [Packaging & Distribution](#6-packaging--distribution)
 7. [Known Issues & Constraints](#7-known-issues--constraints)
 
@@ -75,7 +75,7 @@ cosmicsnip/
 4. `_start_capture()` → `capture.py:capture_screen()` runs `cosmic-screenshot`
 5. `SelectionOverlay` created → `OverlayController` spawns `MonitorOverlay` per monitor
 6. User drags to select → `finalise()` → `hide_all()` → `_on_region_selected()` callback
-7. PIL crops the image, saves to `~/Pictures/screenshots/snip-YYYYMMDD-HHMMSS.png`
+7. GdkPixbuf crops the image, saves to `~/Pictures/screenshots/snip-YYYYMMDD-HHMMSS.png`
 8. `SnipEditor` opens with the cropped image, auto-copies to clipboard
 
 ### UC-2: Subsequent capture (app already running)
@@ -144,7 +144,7 @@ cosmicsnip/
 
 | Symbol | Line | Value |
 |--------|------|-------|
-| `__version__` | 3 | `"1.0.1"` |
+| `__version__` | 3 | `"1.0.2"` |
 | `__app_id__` | 4 | `"io.github.itssoup.CosmicSnip"` |
 
 Referenced by: `app.py` (application ID), `tray.py` (icon name).
@@ -160,7 +160,7 @@ Referenced by: `app.py` (application ID), `tray.py` (icon name).
 | `__init__(tray_only)` | 41 | Init app, connect `activate` signal |
 | `_on_activate(_app)` | 50 | Hold app, register tray, load CSS, start capture |
 | `_start_capture()` | 79 | Clean old overlays, run cosmic-screenshot, present overlay |
-| `_on_region_selected(path, x1,y1,x2,y2)` | 109 | Crop with PIL, save, open editor |
+| `_on_region_selected(path, x1,y1,x2,y2)` | 109 | Crop with GdkPixbuf, save, open editor |
 | `_on_cancelled()` | 138 | Hide overlay, go idle |
 | `_show_error(message)` | 145 | Alert dialog for capture failures |
 
@@ -196,7 +196,7 @@ Referenced by: `app.py` (application ID), `tray.py` (icon name).
 - `validate_path_within(path, TEMP_DIR)` — no path traversal
 - `open_no_follow(path)` — rejects symlinks (O_NOFOLLOW)
 - `validate_png_magic(fd)` — checks `\x89PNG\r\n\x1a\n` header
-- PIL dimension check against `MAX_IMAGE_WIDTH` / `MAX_IMAGE_HEIGHT`
+- GdkPixbuf header dimension check against `MAX_IMAGE_WIDTH` / `MAX_IMAGE_HEIGHT`
 
 ---
 
@@ -553,7 +553,7 @@ controller.finalise()
   → hide_all() — transparent hidden-state draw, BACKGROUND layer, opacity 0
   → _on_selected(image_path, x1, y1, x2, y2)
     → app._on_region_selected()
-      → PIL.Image.open(path).crop((x1,y1,x2,y2))
+      → GdkPixbuf.Pixbuf.new_from_file(path).new_subpixbuf(x1,y1,w,h)
       → save to ~/Pictures/screenshots/snip-YYYYMMDD-HHMMSS.png
       → cleanup_file(temp_path)
       → SnipEditor(app, crop_path)
@@ -624,93 +624,34 @@ Right-click → "Quit"
 
 ---
 
-## 5. Code Reference Index
+## 5. Code Navigation Index
 
-Quick lookup for making changes. Format: `ref:ID` → `file:line` + description.
+Quick lookup for where core behavior lives.
 
 ### App Lifecycle
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:APP_INIT` | `app.py:41` | `CosmicSnipApp.__init__()` |
-| `ref:APP_ACTIVATE` | `app.py:50` | `_on_activate()` — entry point for each activation |
-| `ref:APP_CAPTURE` | `app.py:79` | `_start_capture()` — cleanup + capture + overlay |
-| `ref:APP_REGION` | `app.py:109` | `_on_region_selected()` — crop + editor |
-| `ref:APP_CANCEL` | `app.py:138` | `_on_cancelled()` — go idle |
-| `ref:APP_MAIN` | `app.py:193` | `main()` — CLI entry point |
-| `ref:APP_PRELOAD` | `app.py:179` | `_ensure_layer_shell_preload()` |
-| `ref:APP_CSS` | `app.py:155` | Embedded CSS for pill label |
+| File | Key Entry Points |
+|------|------------------|
+| `app.py` | `CosmicSnipApp.__init__()`, `_on_activate()`, `_start_capture()`, `_on_region_selected()`, `_on_cancelled()`, `main()` |
+| `tray.py` | `TrayIcon.register()`, `_handle_sni_call()`, `_handle_menu_call()`, `_build_menu_layout()` |
 
-### Capture
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:CAP_SCREEN` | `capture.py:~30` | `capture_screen()` — run cosmic-screenshot |
-| `ref:CAP_CLEANUP` | `capture.py:~90` | `cleanup_temp_files()` — remove old temps |
-| `ref:CAP_FILE` | `capture.py:~110` | `cleanup_file()` — delete specific temp |
+### Capture and Overlay
+| File | Key Entry Points |
+|------|------------------|
+| `capture.py` | `capture_screen()`, `_capture_cosmic()`, `cleanup_temp_files()`, `cleanup_file()` |
+| `overlay.py` | `SelectionState`, `MonitorOverlay._draw()`, `OverlayController.reconfigure()`, `OverlayController.hide_all()`, `SelectionOverlay` |
+| `monitors.py` | `detect_monitors()`, `get_monitors()`, `save_config()`, `load_config()`, `get_gdk_monitor()` |
 
-### Overlay
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:OV_STATE` | `overlay.py:73` | `SelectionState` — shared mutable rect |
-| `ref:OV_MONITOR` | `overlay.py:105` | `MonitorOverlay` — per-monitor layer-shell window |
-| `ref:OV_DRAW` | `overlay.py:~209` | `MonitorOverlay._draw()` — Cairo paint |
-| `ref:OV_CTRL` | `overlay.py:295` | `OverlayController` — manages all overlays |
-| `ref:OV_HIDE` | `overlay.py:332` | `hide_all()` — blank + background + transparent |
-| `ref:OV_FINAL` | `overlay.py:349` | `finalise()` — hide + callback |
-| `ref:OV_CANCEL` | `overlay.py:356` | `cancel()` — hide + callback |
-| `ref:OV_FALLBACK` | `overlay.py:361` | `FallbackOverlay` — single-window mode |
-| `ref:OV_API` | `overlay.py:512` | `SelectionOverlay` — public factory |
+### Editor and Output
+| File | Key Entry Points |
+|------|------------------|
+| `editor.py` | `SnipEditor.__init__()`, `_on_draw()`, `_annotation_bounds()`, `_render_to_surface()`, `_copy_to_clipboard()`, `_save_as_dialog()`, `_on_key()` |
+| `clipboard.py` | `send_notification()` |
 
-### Editor
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:ED_INIT` | `editor.py:~45` | `SnipEditor.__init__()` — canvas sizing, margin calc |
-| `ref:ED_HEADER` | `editor.py:~140` | `_build_headerbar()` — tools, colors, width, actions |
-| `ref:ED_DRAW` | `editor.py:~280` | `_draw_canvas()` — main Cairo draw |
-| `ref:ED_PRESS` | `editor.py:~330` | `_on_press()` — start annotation |
-| `ref:ED_MOTION` | `editor.py:~350` | `_on_motion()` — update stroke |
-| `ref:ED_RELEASE` | `editor.py:~370` | `_on_release()` — finalize annotation |
-| `ref:ED_RENDER` | `editor.py:~440` | `_render_annotation()` — Cairo draw one annotation |
-| `ref:ED_BOUNDS` | `editor.py:~458` | `_annotation_bounds()` — tight bounding box |
-| `ref:ED_SURFACE` | `editor.py:~506` | `_render_to_surface()` — render to Cairo surface |
-| `ref:ED_COPY` | `editor.py:~522` | `_copy_to_clipboard()` — PNG → clipboard |
-| `ref:ED_SAVE` | `editor.py:~540` | `_save_as_dialog()` — file dialog + write |
-| `ref:ED_KEYS` | `editor.py:~590` | `_on_key()` — keyboard shortcuts |
-
-### Security
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:SEC_ROOT` | `security.py:~10` | `refuse_root()` |
-| `ref:SEC_PATH` | `security.py:~20` | `validate_path_within()` |
-| `ref:SEC_NOFOLLOW` | `security.py:~40` | `open_no_follow()` |
-| `ref:SEC_PNG` | `security.py:~55` | `validate_png_magic()` |
-| `ref:SEC_CHMOD` | `security.py:~70` | `fchmod_safe()` |
-
-### Tray
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:TRAY_INIT` | `tray.py:80` | `TrayIcon.__init__()` |
-| `ref:TRAY_REG` | `tray.py:91` | `register()` — DBus registration |
-| `ref:TRAY_SNI` | `tray.py:133` | SNI method handler (Activate) |
-| `ref:TRAY_MENU` | `tray.py:160` | Menu method handler (GetLayout, Event) |
-| `ref:TRAY_LAYOUT` | `tray.py:188` | `_build_menu_layout()` |
-
-### Config
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:CFG_PATHS` | `config.py:28-32` | SAVE_DIR, TEMP_DIR |
-| `ref:CFG_LIMITS` | `config.py:36-41` | Image/undo/stroke limits |
-| `ref:CFG_OVERLAY` | `config.py:45-48` | Overlay visual constants |
-| `ref:CFG_EDITOR` | `config.py:52-55` | Editor annotation defaults |
-| `ref:CFG_PALETTE` | `config.py:67-76` | Color palette + default |
-| `ref:CFG_TOOLS` | `config.py:89-94` | Tool definitions |
-| `ref:CFG_DIRS` | `config.py:~100` | `ensure_directories()` |
-
-### Monitors
-| Ref | File:Line | Description |
-|-----|-----------|-------------|
-| `ref:MON_INFO` | `monitors.py:~15` | `MonitorInfo` dataclass |
-| `ref:MON_GET` | `monitors.py:~40` | `get_monitors()` — detect + cache |
-| `ref:MON_GDK` | `monitors.py:~130` | `get_gdk_monitor()` — by index |
+### Configuration and Security
+| File | Key Entry Points |
+|------|------------------|
+| `config.py` | Constants for save paths, tool defaults, palette, and rendering limits |
+| `security.py` | `refuse_root()`, `validate_path_within()`, `open_no_follow()`, `validate_png_magic_fd()`, `fchmod_safe()` |
 
 ---
 
@@ -718,13 +659,13 @@ Quick lookup for making changes. Format: `ref:ID` → `file:line` + description.
 
 ### pyproject.toml
 - Name: `cosmicsnip`
-- Version: `1.0.1`
+- Version: `1.0.2`
 - Python: `>=3.10`
-- Dependencies: `PyGObject>=3.42`, `Pillow>=9.0`, `dbus-python>=1.3`
+- Dependencies: `PyGObject>=3.42`, `dbus-python>=1.3`
 - Entry point: `cosmicsnip = cosmicsnip.app:main`
 
 ### build-deb.sh
-Builds a standalone `.deb` at `dist/cosmicsnip_1.0.1-1_all.deb`.
+Builds a standalone `.deb` at `dist/cosmicsnip_1.0.2-1_all.deb`.
 
 **Package tree:**
 ```
@@ -766,7 +707,7 @@ exec python3 -m cosmicsnip.app "$@"
 
 ### Debian metadata
 
-**debian/control**: Dependencies include `python3-gi`, `python3-gi-cairo`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`, `python3-pil`, `python3-dbus`, `python3-cairo`, `libnotify-bin`.
+**debian/control**: Dependencies include `python3-gi`, `python3-gi-cairo`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`, `python3-dbus`, `python3-cairo`, `libnotify-bin`.
 
 ---
 

@@ -10,6 +10,7 @@ The only capture + annotate tool that works natively on COSMIC's Wayland composi
 
 - Version history: [`CHANGELOG.md`](CHANGELOG.md)
 - Security policy and disclosure: [`SECURITY.md`](SECURITY.md)
+- Contribution guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - Architecture reference: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ---
@@ -75,7 +76,7 @@ CosmicSnip works because it uses the **XDG Desktop Portal** (`cosmic-screenshot`
 Download from [Releases](https://github.com/itssoup/cosmicsnip/releases/latest) and install:
 
 ```bash
-VERSION="1.0.1"
+VERSION="1.0.2"
 wget "https://github.com/itssoup/cosmicsnip/releases/download/v${VERSION}/cosmicsnip_${VERSION}-1_all.deb"
 sudo apt install "./cosmicsnip_${VERSION}-1_all.deb"
 ```
@@ -114,7 +115,7 @@ sudo apt remove cosmicsnip
 git clone https://github.com/itssoup/cosmicsnip.git
 cd cosmicsnip
 ./build-deb.sh
-sudo apt install ./dist/cosmicsnip_1.0.1-1_all.deb
+sudo apt install ./dist/cosmicsnip_1.0.2-1_all.deb
 ```
 
 Build requires: `python3`, `dpkg-deb`
@@ -125,7 +126,7 @@ Build requires: `python3`, `dpkg-deb`
 
 ```bash
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
-                 python3-pil python3-dbus python3-cairo libnotify-bin
+                 python3-dbus python3-cairo libnotify-bin
 python3 -m cosmicsnip.app
 ```
 
@@ -146,7 +147,7 @@ Security policy and coordinated disclosure: [`SECURITY.md`](SECURITY.md).
 - **Path traversal protection** — all paths are resolved and validated against allowed directories before any read/write
 - **TOCTOU-safe file operations** — chmod uses fd-based `fchmod()`, not path-based, to prevent race conditions
 - **PNG validation** — captured files are verified by magic bytes before processing
-- **PIL decompression bomb limit** — prevents memory exhaustion from malformed images
+- **Image dimension limits** — capture files are rejected if dimensions exceed configured safety bounds
 - **Sandboxed XDG paths** — `XDG_RUNTIME_DIR`, `XDG_PICTURES_DIR` etc. are validated to be within `$HOME`, `/run`, or `/tmp`
 - **Save path restrictions** — blocks saving to system directories (`/etc`, `/usr`, `/bin`, `/proc`, etc.)
 - **Process umask `0077`** — all files created by the app are owner-only by default
@@ -188,7 +189,9 @@ See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contributing
 
-Issues and PRs welcome. If something breaks on your COSMIC setup, open an issue with the log:
+Pull requests are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, workflow, and testing expectations.
+
+If something breaks on your COSMIC setup, open an issue with the log:
 
 ```bash
 cosmicsnip --debug

@@ -13,7 +13,6 @@ sudo apt install -y \
     python3-gi-cairo \
     gir1.2-gtk-4.0 \
     gir1.2-adw-1 \
-    python3-pil \
     python3-dbus \
     python3-cairo \
     libnotify-bin
@@ -73,9 +72,11 @@ Name=CosmicSnip
 GenericName=Screenshot Tool
 Comment=Capture, annotate, and copy screenshots
 Exec=$HOME/.local/bin/cosmicsnip
+TryExec=$HOME/.local/bin/cosmicsnip
+DBusActivatable=true
 Icon=io.github.itssoup.CosmicSnip
 Type=Application
-Categories=Utility;Graphics;GTK;
+Categories=Graphics;GTK;
 Keywords=screenshot;snip;capture;annotate;clip;
 StartupNotify=false
 Actions=capture
@@ -89,7 +90,7 @@ EOF
 echo "[5/5] Verifying PATH and refreshing app launcher..."
 update-desktop-database ~/.local/share/applications/ 2>/dev/null || true
 gtk-update-icon-cache -f ~/.local/share/icons/hicolor/ 2>/dev/null || true
-if ! grep -qF '.local/bin' ~/.bashrc 2>/dev/null; then
+if ! grep -qxF 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc 2>/dev/null; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
     echo "  → Added ~/.local/bin to PATH (run: source ~/.bashrc)"
 fi

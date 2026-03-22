@@ -7,17 +7,17 @@
 #   ./build-deb.sh
 #
 # Output:
-#   dist/cosmicsnip_1.0.1-1_all.deb
+#   dist/cosmicsnip_1.0.2-1_all.deb
 #
 # Install with:
-#   sudo apt install ./dist/cosmicsnip_1.0.1-1_all.deb
+#   sudo apt install ./dist/cosmicsnip_1.0.2-1_all.deb
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.0.1"
+VERSION="1.0.2"
 PACKAGE="cosmicsnip"
 PKG_DIR="dist/${PACKAGE}_${VERSION}-1_all"
 
@@ -36,6 +36,17 @@ for cmd in python3 dpkg-deb; do
     fi
 done
 echo "  OK"
+
+for required in data/io.github.itssoup.CosmicSnip.desktop \
+                data/icons/hicolor/scalable/apps/io.github.itssoup.CosmicSnip.svg \
+                data/io.github.itssoup.CosmicSnip-autostart.desktop \
+                data/io.github.itssoup.CosmicSnip.metainfo.xml; do
+    if [ ! -f "$required" ]; then
+        echo "  ERROR: Missing required file: $required"
+        exit 1
+    fi
+done
+echo "  Required files present"
 
 # ── 2. Create package tree ────────────────────────────────────────────────────
 echo "[2/5] Creating package tree at $PKG_DIR ..."
@@ -89,6 +100,7 @@ cp data/io.github.itssoup.CosmicSnip-autostart.desktop \
 # Doc files
 mkdir -p "$PKG_DIR/usr/share/doc/$PACKAGE"
 cp README.md  "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
+cp CONTRIBUTING.md "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
 cp CHANGELOG.md "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
 cp SECURITY.md "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
 cp LICENSE    "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
@@ -104,7 +116,7 @@ Version: ${VERSION}-1
 Section: graphics
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, python3-pil, python3-dbus, python3-cairo, libnotify-bin
+Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, python3-dbus, python3-cairo, libnotify-bin
 Maintainer: itssoup <itssoup@users.noreply.github.com>
 Homepage: https://github.com/itssoup/cosmicsnip
 Description: Screenshot snipping tool for COSMIC Desktop / Wayland

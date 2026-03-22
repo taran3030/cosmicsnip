@@ -6,9 +6,13 @@ and returns the path. Temp files are cleaned up between sessions.
 
 import glob
 import os
-import subprocess
+import subprocess  # nosec B404
 import time
 from pathlib import Path
+
+import gi
+gi.require_version("GdkPixbuf", "2.0")
+from gi.repository import GdkPixbuf
 
 from cosmicsnip.config import TEMP_DIR, TEMP_FILE_MODE, MAX_IMAGE_WIDTH, MAX_IMAGE_HEIGHT
 from cosmicsnip.log import get_logger
@@ -16,11 +20,8 @@ from cosmicsnip.security import (
     validate_path_within, open_no_follow, fchmod_safe, validate_png_magic_fd,
 )
 
-from PIL import Image
-
-Image.MAX_IMAGE_PIXELS = MAX_IMAGE_WIDTH * MAX_IMAGE_HEIGHT
-
 log = get_logger("capture")
+CAPTURE_MTIME_GRACE_SECONDS = 2
 
 
 class CaptureError(Exception):
@@ -28,13 +29,12 @@ class CaptureError(Exception):
 
 
 def _validate_image(path: str) -> bool:
-    """Quick sanity check — is it a real image within size limits?"""
+    """Quick sanity check — valid image header with bounded dimensions."""
     try:
-        with Image.open(path) as img:
-            w, h = img.size
-            ok = 0 < w <= MAX_IMAGE_WIDTH and 0 < h <= MAX_IMAGE_HEIGHT
-            log.debug("Validated image %s: %dx%d  valid=%s", path, w, h, ok)
-            return ok
+        fmt, w, h = GdkPixbuf.Pixbuf.get_file_info(path)
+        ok = fmt is not None and 0 < w <= MAX_IMAGE_WIDTH and 0 < h <= MAX_IMAGE_HEIGHT
+        log.debug("Validated image %s: %dx%d  valid=%s", path, w, h, ok)
+        return ok
     except Exception as exc:
         log.warning("Image validation failed for %s: %s", path, exc)
         return False
@@ -52,7 +52,7 @@ def _capture_cosmic() -> str | None:
     log.info("Running capture command: %s", " ".join(cmd))
     t0 = time.time()
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)  # nosec B603
         log.debug("cosmic-screenshot returncode: %d", result.returncode)
         if result.stdout.strip():
             log.debug("cosmic-screenshot stdout: %s", result.stdout.strip())
@@ -71,8 +71,8 @@ def _capture_cosmic() -> str | None:
         log.debug("Candidates: %s", candidates)
 
         for path in candidates:
-            # Skip files from before this capture
-            if os.path.getmtime(path) < t0 - 2:
+            # Allow minor filesystem/clock skew when matching newly written captures.
+            if os.path.getmtime(path) < t0 - CAPTURE_MTIME_GRACE_SECONDS:
                 log.debug("Skipping stale file: %s", path)
                 continue
             fd = None

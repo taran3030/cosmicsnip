@@ -17,6 +17,8 @@ from gi.repository import Gdk
 from cosmicsnip.log import get_logger
 
 log = get_logger("monitors")
+MAX_MONITOR_INDEX = 64
+MAX_MONITOR_COORD = 32768
 
 _XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
 CONFIG_DIR: Path = _XDG_CONFIG / "cosmicsnip"
@@ -119,9 +121,11 @@ def load_config() -> Optional[list[MonitorInfo]]:
                 return None
             if info.width > 15360 or info.height > 8640:
                 return None
-            if not (0 <= info.gdk_index <= 64):
+            # Sanity cap: desktop setups beyond 64 monitors are not realistic.
+            if not (0 <= info.gdk_index <= MAX_MONITOR_INDEX):
                 return None
-            if abs(info.x) > 32768 or abs(info.y) > 32768:
+            # Reject clearly invalid compositor coordinates from corrupt cache data.
+            if abs(info.x) > MAX_MONITOR_COORD or abs(info.y) > MAX_MONITOR_COORD:
                 return None
             result.append(info)
         log.info("Loaded %d monitor(s) from config.", len(result))

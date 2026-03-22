@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cosmicsnip"
-version = "1.0.1"
+version = "1.0.2"
 description = "A polished screenshot snipping tool for COSMIC Desktop / Wayland"
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,7 +22,6 @@ classifiers = [
 ]
 dependencies = [
     "PyGObject>=3.42",
-    "Pillow>=9.0",
     "dbus-python>=1.3",
 ]
 

@@ -1,18 +1,21 @@
-cosmicsnip (1.0.1-1) noble; urgency=medium
+cosmicsnip (1.0.2-1) unstable; urgency=medium
 
-  * Overlay reliability/performance update:
-    - Reuse overlay windows across captures, including monitor topology changes.
-    - Use per-monitor overlay path for single-monitor setups too.
-  * Security hardening:
-    - Fix path-prefix checks to use true path ancestry checks.
-    - Harden temp cleanup path validation and symlink handling.
-    - Add SECURITY.md coordinated disclosure policy.
-  * Documentation and release hygiene:
-    - Add CHANGELOG.md.
-    - Improve release-install instructions in README.
-    - Update repository URLs to github.com/itssoup/cosmicsnip.
+  * Distro-submission polish: professional docs, cleaned comments, documented constants
+  * Removed Pillow dependency — image handling via native GdkPixbuf
+  * AppStream metadata: OARS content rating, screenshots, developer contact
+  * Desktop entry: TryExec, DBusActivatable for freedesktop.org compliance
+  * Added CONTRIBUTING.md with development workflow
+  * Build/install scripts hardened with file checks and idempotent PATH
 
- -- itssoup <itssoup@users.noreply.github.com>  Sat, 21 Mar 2026 21:10:00 +0000
+ -- itssoup <itssoup@users.noreply.github.com>  Fri, 21 Mar 2026 00:00:00 +0000
+
+cosmicsnip (1.0.1-1) unstable; urgency=medium
+
+  * Overlay reliability: reuse windows across captures
+  * Security hardening: path ancestry checks, symlink-safe cleanup
+  * Added SECURITY.md, CHANGELOG.md, app icon, autostart entry
+
+ -- itssoup <itssoup@users.noreply.github.com>  Fri, 21 Mar 2026 00:00:00 +0000
 
 cosmicsnip (1.0.0-1) noble; urgency=medium
 
