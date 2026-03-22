@@ -50,6 +50,7 @@ def _capture_cosmic() -> str | None:
         "--notify=false",
     ]
     log.info("Running capture command: %s", " ".join(cmd))
+    t0 = time.time()
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         log.debug("cosmic-screenshot returncode: %d", result.returncode)
@@ -70,6 +71,10 @@ def _capture_cosmic() -> str | None:
         log.debug("Candidates: %s", candidates)
 
         for path in candidates:
+            # Skip files from before this capture
+            if os.path.getmtime(path) < t0 - 2:
+                log.debug("Skipping stale file: %s", path)
+                continue
             fd = None
             try:
                 fd = open_no_follow(path)

@@ -32,7 +32,7 @@ CosmicSnip works because it uses the **XDG Desktop Portal** (`cosmic-screenshot`
 - Pen, highlighter, arrow, rectangle tools
 - 6-colour palette + adjustable stroke width
 - Draw beyond the screenshot edge — canvas extends past the image bounds
-- Full undo (Ctrl+Z, unlimited)
+- Full undo (Ctrl+Z, up to 200 steps)
 
 **Output**
 - Auto-copies to clipboard on capture (paste immediately)

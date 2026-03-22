@@ -105,16 +105,21 @@ class SelectionState:
 class MonitorOverlay(Gtk.Window):
     """Layer-shell fullscreen overlay for one monitor."""
 
-    def __init__(self, app, monitor_info, pixbuf, state, controller):
+    def __init__(self, app, monitor_info, pixbuf, state, controller,
+                 origin_x=0, origin_y=0):
         super().__init__(application=app)
         self._info = monitor_info
         self._state = state
         self._controller = controller
+        self._is_hidden = False
+        # Pixel offset of this monitor in the screenshot image
+        self._px = monitor_info.x - origin_x
+        self._py = monitor_info.y - origin_y
 
         # Crop this monitor's region from the combined screenshot
         img_w, img_h = pixbuf.get_width(), pixbuf.get_height()
-        cx = max(0, min(monitor_info.x, img_w))
-        cy = max(0, min(monitor_info.y, img_h))
+        cx = max(0, min(self._px, img_w))
+        cy = max(0, min(self._py, img_h))
         cw = min(monitor_info.width, img_w - cx)
         ch = min(monitor_info.height, img_h - cy)
 
@@ -138,7 +143,7 @@ class MonitorOverlay(Gtk.Window):
                 LayerShell.init_for_window(self)
                 LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
                 LayerShell.set_namespace(self, "cosmicsnip-overlay")
-                LayerShell.set_exclusive_zone(self, -1)
+                LayerShell.set_exclusive_zone(self, 0)
                 for edge in (LayerShell.Edge.TOP, LayerShell.Edge.BOTTOM,
                              LayerShell.Edge.LEFT, LayerShell.Edge.RIGHT):
                     LayerShell.set_anchor(self, edge, True)
@@ -199,15 +204,20 @@ class MonitorOverlay(Gtk.Window):
     # ── Coordinate mapping ───────────────────────────────────────────────
 
     def _canvas_to_image(self, cx, cy):
-        return (int(max(0, min(cx, self._local_w - 1))) + self._info.x,
-                int(max(0, min(cy, self._local_h - 1))) + self._info.y)
+        return (int(max(0, min(cx, self._local_w - 1))) + self._px,
+                int(max(0, min(cy, self._local_h - 1))) + self._py)
 
     def _image_to_canvas(self, ix, iy):
-        return float(ix - self._info.x), float(iy - self._info.y)
+        return float(ix - self._px), float(iy - self._py)
 
     # ── Drawing ──────────────────────────────────────────────────────────
 
     def _draw(self, _area, cr, w, h):
+        if self._is_hidden:
+            cr.set_source_rgba(0, 0, 0, 0)
+            cr.set_operator(1)  # CAIRO_OPERATOR_SOURCE
+            cr.paint()
+            return
         # Base image + dim overlay
         cr.set_source_rgb(0, 0, 0)
         cr.paint()
@@ -247,8 +257,8 @@ class MonitorOverlay(Gtk.Window):
         cr.stroke()
 
         # Size label (only on the monitor where the drag ends)
-        end_here = (self._info.x <= self._state.ex < self._info.x + self._info.width and
-                    self._info.y <= self._state.ey < self._info.y + self._info.height)
+        end_here = (self._px <= self._state.ex < self._px + self._info.width and
+                    self._py <= self._state.ey < self._py + self._info.height)
         if end_here:
             dim = f"{x2 - x1} × {y2 - y1}"
             cr.set_font_size(12)
@@ -280,7 +290,9 @@ class MonitorOverlay(Gtk.Window):
             return
         self._state.update(*self._canvas_to_image(x, y))
         self._state.finish()
-        self._controller.redraw_all()
+        # Immediate redraw on release (bypass coalescing)
+        for ov in self._controller._overlays:
+            ov._canvas.queue_draw()
         if self._state.size_ok():
             self._controller.finalise()
 
@@ -305,12 +317,20 @@ class OverlayController:
         self._overlays: list[MonitorOverlay] = []
         self.primary_index = monitors[0].gdk_index if monitors else 0
 
+        # Normalize monitor origins so top-left of combined layout is (0,0).
+        # Screenshot pixels start at (0,0) regardless of compositor coords.
+        self._origin_x = min(m.x for m in monitors)
+        self._origin_y = min(m.y for m in monitors)
+
         pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
-        log.info("Combined image: %dx%d px", pixbuf.get_width(), pixbuf.get_height())
+        log.info("Combined image: %dx%d px  layout origin=(%d,%d)",
+                 pixbuf.get_width(), pixbuf.get_height(),
+                 self._origin_x, self._origin_y)
 
         for mon in monitors:
             self._overlays.append(
                 MonitorOverlay(app=app, monitor_info=mon, pixbuf=pixbuf,
+                               origin_x=self._origin_x, origin_y=self._origin_y,
                                state=self._state, controller=self))
 
     def present(self):
@@ -318,8 +338,18 @@ class OverlayController:
             ov.present()
 
     def redraw_all(self):
-        for ov in self._overlays:
-            ov._canvas.queue_draw()
+        """Coalesce redraws to max ~60fps. Updates state immediately, defers paint."""
+        if hasattr(self, '_redraw_pending') and self._redraw_pending:
+            return  # a frame callback is already queued
+        self._redraw_pending = True
+
+        def _do_redraw():
+            self._redraw_pending = False
+            for ov in self._overlays:
+                ov._canvas.queue_draw()
+            return GLib.SOURCE_REMOVE
+
+        GLib.timeout_add(16, _do_redraw)  # ~60fps
 
     def _release_keyboard(self):
         """Release exclusive keyboard grab."""
@@ -331,18 +361,14 @@ class OverlayController:
                     pass
 
     def hide_all(self):
-        """Dismiss overlay windows — blank canvas, drop to background, go transparent."""
+        """Dismiss overlay windows — mark hidden, repaint transparent, drop layer."""
         self._release_keyboard()
         for ov in self._overlays:
-            # Blank the pixbuf so it doesn't paint stale content
-            ov._local_pixbuf = GdkPixbuf.Pixbuf.new(
-                GdkPixbuf.Colorspace.RGB, True, 8, 1, 1)
-            ov._local_pixbuf.fill(0x00000000)
+            ov._is_hidden = True
             ov._canvas.queue_draw()
             if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
                 try:
                     LayerShell.set_layer(ov, LayerShell.Layer.BACKGROUND)
-                    LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.NONE)
                 except Exception:
                     pass
             ov.set_opacity(0)

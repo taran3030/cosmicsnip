@@ -26,6 +26,7 @@ from cosmicsnip.config import (
 )
 from cosmicsnip.clipboard import send_notification
 from cosmicsnip.log import get_logger
+from cosmicsnip.security import is_save_path_blocked
 
 log = get_logger("editor")
 
@@ -341,7 +342,7 @@ class SnipEditor(Adw.ApplicationWindow):
         if t == "arrow" and self._shape_start:
             return {"type": "arrow", "start": self._shape_start,
                     "end": self._shape_end, "color": color, "width": self._pen_width}
-        if t == "rectangle" and self._shape_start:
+        if t == "rect" and self._shape_start:
             return {"type": "rect", "start": self._shape_start,
                     "end": self._shape_end, "color": color, "width": self._pen_width}
         return None
@@ -566,15 +567,10 @@ class SnipEditor(Adw.ApplicationWindow):
         if not path.lower().endswith(".png"):
             path += ".png"
 
-        resolved = Path(path).resolve()
-        blocked = ("/etc", "/usr", "/bin", "/sbin", "/boot",
-                   "/proc", "/sys", "/dev", "/var/run", "/run",
-                   "/lib", "/lib64", "/root")
-        for prefix in blocked:
-            if str(resolved).startswith(prefix + "/") or str(resolved) == prefix:
-                log.warning("Save blocked — sensitive path: %s", resolved)
-                self._toast("Cannot save to system directories")
-                return
+        if is_save_path_blocked(path):
+            log.warning("Save blocked — system path: %s", path)
+            self._toast("Cannot save to system directories")
+            return
 
         try:
             surface = self._render_to_surface()
@@ -610,7 +606,7 @@ class SnipEditor(Adw.ApplicationWindow):
             if keyval in (Gdk.KEY_q, Gdk.KEY_Q):
                 self._app.quit()
                 return True
-        hotkeys = {"p": "pen", "h": "highlighter", "a": "arrow", "r": "rectangle"}
+        hotkeys = {"p": "pen", "h": "highlighter", "a": "arrow", "r": "rect"}
         char = chr(keyval).lower() if 32 < keyval < 127 else ""
         if char in hotkeys:
             self._tool_buttons[hotkeys[char]].set_active(True)

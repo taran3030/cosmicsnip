@@ -16,10 +16,12 @@ _fmt = logging.Formatter(
 
 def setup_logging(debug: bool = False) -> None:
     """Call once at startup. All later get_logger() calls inherit this config."""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    level = logging.DEBUG if debug else logging.INFO
     root = logging.getLogger("cosmicsnip")
+    if root.handlers:
+        return  # already configured
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    level = logging.DEBUG if debug else logging.INFO
     root.setLevel(level)
 
     if not LOG_FILE.exists():

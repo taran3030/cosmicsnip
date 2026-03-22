@@ -85,6 +85,18 @@ def validate_png_magic_fd(fd: int, path: str | Path) -> None:
     os.lseek(fd, 0, os.SEEK_SET)
 
 
+BLOCKED_SAVE_PREFIXES = (
+    "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64",
+    "/boot", "/dev", "/proc", "/sys", "/var/lib", "/var/log",
+)
+
+
+def is_save_path_blocked(path: str | Path) -> bool:
+    """Returns True if path is in a system directory where saves are blocked."""
+    resolved = str(Path(path).resolve())
+    return any(resolved.startswith(p) for p in BLOCKED_SAVE_PREFIXES)
+
+
 def verify_dir_ownership(dir_path: Path) -> None:
     """Verify directory is owned by current user and isn't a symlink."""
     p = Path(dir_path)

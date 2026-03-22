@@ -90,7 +90,7 @@ TOOLS: tuple[ToolDef, ...] = (
     ToolDef("pen",         "Pen",         "edit-symbolic",                    "Freehand pen (P)"),
     ToolDef("highlighter", "Highlighter", "format-text-highlight-symbolic",   "Highlighter (H)"),
     ToolDef("arrow",       "Arrow",       "go-next-symbolic",                 "Arrow (A)"),
-    ToolDef("rectangle",   "Rectangle",   "checkbox-symbolic",                "Rectangle (R)"),
+    ToolDef("rect",        "Rectangle",   "checkbox-symbolic",                "Rectangle (R)"),
 )
 
 # ── Directory setup ──────────────────────────────────────────────────────────

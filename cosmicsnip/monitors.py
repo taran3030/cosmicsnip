@@ -121,7 +121,7 @@ def load_config() -> Optional[list[MonitorInfo]]:
                 return None
             if not (0 <= info.gdk_index <= 64):
                 return None
-            if info.x < 0 or info.y < 0:
+            if abs(info.x) > 32768 or abs(info.y) > 32768:
                 return None
             result.append(info)
         log.info("Loaded %d monitor(s) from config.", len(result))
