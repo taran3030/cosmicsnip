@@ -330,11 +330,13 @@ class OverlayController:
                     pass
 
     def hide_all(self):
-        """Dismiss overlays by moving to background + making transparent.
+        """Dismiss and destroy overlay windows.
 
-        We never call set_visible(False) on layer-shell windows — COSMIC
-        drops the Wayland connection when surfaces disappear.
+        Steps: release keyboard → move to BACKGROUND layer → make transparent
+        → schedule destroy. The app stays alive via hold() + tray icon, so
+        destroying surfaces won't drop the Wayland connection.
         """
+        self._release_keyboard()
         for ov in self._overlays:
             if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
                 try:
@@ -342,12 +344,16 @@ class OverlayController:
                 except Exception:
                     pass
             ov.set_opacity(0)
+            # Destroy after a short delay so the compositor processes the hide
+            GLib.timeout_add(200, ov.destroy)
+        self._overlays.clear()
+        log.info("Overlays dismissed and scheduled for destroy.")
 
     def finalise(self):
         x1, y1, x2, y2 = self._state.rect()
         log.info("Selection finalised: (%d,%d)→(%d,%d) %dx%d",
                  x1, y1, x2, y2, x2 - x1, y2 - y1)
-        self._release_keyboard()
+        self.hide_all()
         self._on_selected(self._image_path, x1, y1, x2, y2)
 
     def cancel(self):
@@ -498,8 +504,9 @@ class FallbackOverlay(Gtk.Window):
             self._on_selected(self._image_path, ix1, iy1, ix2, iy2)
 
     def hide_all(self):
-        """Match OverlayController's API — hide without destroying."""
+        """Match OverlayController's API."""
         self.set_opacity(0)
+        GLib.timeout_add(200, self.destroy)
 
     def _cancel(self):
         self.hide_all()

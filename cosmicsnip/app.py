@@ -121,23 +121,15 @@ class CosmicSnipApp(Adw.Application):
             cleanup_file(image_path)
 
             log.info("Opening editor: %s", crop_path)
-            editor = SnipEditor(app=self, image_path=crop_path)
-
-            # Hide overlays only after editor has a live Wayland surface
-            overlay_ref = self._overlay
             self._overlay = None
-
-            def _on_editor_mapped(_widget):
-                if overlay_ref:
-                    log.info("Editor mapped — hiding overlays.")
-                    overlay_ref.hide_all()
-
-            editor.connect("map", _on_editor_mapped)
+            editor = SnipEditor(app=self, image_path=crop_path)
             editor.present()
 
         except Exception as exc:
             log.exception("Failed to crop/open: %s", exc)
-            self._overlay = None
+            if self._overlay:
+                self._overlay.hide_all()
+                self._overlay = None
             self._show_error(f"Failed to crop image: {exc}")
 
     def _on_cancelled(self):
