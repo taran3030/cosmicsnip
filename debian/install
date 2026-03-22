@@ -1,2 +1,4 @@
 data/io.github.itssoup.CosmicSnip.desktop usr/share/applications/
 data/io.github.itssoup.CosmicSnip.metainfo.xml usr/share/metainfo/
+data/icons/hicolor/scalable/apps/io.github.itssoup.CosmicSnip.svg usr/share/icons/hicolor/scalable/apps/
+data/io.github.itssoup.CosmicSnip-autostart.desktop etc/xdg/autostart/

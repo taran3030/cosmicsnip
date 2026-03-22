@@ -3,7 +3,7 @@
 > Complete technical reference for the codebase. Intended for AI agents (Codex, Claude, etc.)
 > and contributors who need to understand how every piece fits together.
 >
-> **Last updated:** 2026-03-21 · **Version:** 1.0.0
+> **Last updated:** 2026-03-21 · **Version:** 1.0.1
 
 ---
 
@@ -144,7 +144,7 @@ cosmicsnip/
 
 | Symbol | Line | Value |
 |--------|------|-------|
-| `__version__` | 3 | `"1.0.0"` |
+| `__version__` | 3 | `"1.0.1"` |
 | `__app_id__` | 4 | `"io.github.itssoup.CosmicSnip"` |
 
 Referenced by: `app.py` (application ID), `tray.py` (icon name).
@@ -438,7 +438,8 @@ Manages multiple `MonitorOverlay` windows with shared `SelectionState`.
 |--------|------|---------|
 | `present()` | 315 | Show all overlay windows |
 | `redraw_all()` | 319 | Queue draw on all canvases |
-| `hide_all()` | 332 | Blank pixbufs + BACKGROUND layer + opacity 0 |
+| `reconfigure()` | ~335 | Reuse existing overlay windows for a new capture, adapting to monitor topology changes |
+| `hide_all()` | 332 | Hidden-state repaint + BACKGROUND layer + opacity 0 |
 | `finalise()` | 349 | Hide overlays, call `_on_selected` callback |
 | `cancel()` | 356 | Hide overlays, call `_on_cancelled` callback |
 
@@ -446,10 +447,10 @@ Manages multiple `MonitorOverlay` windows with shared `SelectionState`.
 ```python
 # Can't destroy() — causes Wayland broken pipe
 # Can't set_visible(False) — same broken pipe
-# Solution: blank the pixbuf so nothing paints, then hide
+# Solution: mark hidden so draw paints transparent, then drop layer + opacity 0
 for ov in self._overlays:
-    ov._local_pixbuf = blank_1x1_pixbuf  # paint nothing
-    ov._canvas.queue_draw()               # repaint as blank
+    ov._is_hidden = True                  # draw path paints transparent
+    ov._canvas.queue_draw()
     LayerShell.set_layer(ov, BACKGROUND)  # drop below everything
     ov.set_opacity(0)                     # invisible
 ```
@@ -458,7 +459,7 @@ for ov in self._overlays:
 Single-window fallback when layer-shell isn't available. Scales the combined screenshot to fit one screen. Converts screen coords back to image coords on release.
 
 #### `SelectionOverlay` (line 512)
-Public API / factory. Picks `OverlayController` (≥2 monitors + layer-shell) or `FallbackOverlay`.
+Public API / factory. Uses `OverlayController` whenever monitor geometry is available (including single-monitor). Falls back to `FallbackOverlay` only when monitor data is unavailable.
 
 ---
 
@@ -472,7 +473,7 @@ Public API / factory. Picks `OverlayController` (≥2 monitors + layer-shell) or
 | `validate_png_magic(fd)` | ~55 | Reads first 8 bytes, checks PNG magic `\x89PNG\r\n\x1a\n` |
 | `fchmod_safe(fd, mode)` | ~70 | fd-based chmod (TOCTOU-safe, immune to race conditions) |
 
-**Blocked save paths** (in editor.py `_on_save_response`):
+**Blocked save paths** (in `security.py`, used by `editor.py`):
 `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/boot`, `/dev`, `/proc`, `/sys`, `/var/lib`, `/var/log`
 
 ---
@@ -549,7 +550,7 @@ User drags to select region
     → if state.size_ok(): controller.finalise()
 
 controller.finalise()
-  → hide_all() — blank pixbufs, BACKGROUND layer, opacity 0
+  → hide_all() — transparent hidden-state draw, BACKGROUND layer, opacity 0
   → _on_selected(image_path, x1, y1, x2, y2)
     → app._on_region_selected()
       → PIL.Image.open(path).crop((x1,y1,x2,y2))
@@ -717,13 +718,13 @@ Quick lookup for making changes. Format: `ref:ID` → `file:line` + description.
 
 ### pyproject.toml
 - Name: `cosmicsnip`
-- Version: `1.0.0`
+- Version: `1.0.1`
 - Python: `>=3.10`
 - Dependencies: `PyGObject>=3.42`, `Pillow>=9.0`, `dbus-python>=1.3`
 - Entry point: `cosmicsnip = cosmicsnip.app:main`
 
 ### build-deb.sh
-Builds a standalone `.deb` at `dist/cosmicsnip_1.0.0-1_all.deb`.
+Builds a standalone `.deb` at `dist/cosmicsnip_1.0.1-1_all.deb`.
 
 **Package tree:**
 ```

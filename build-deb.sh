@@ -7,17 +7,17 @@
 #   ./build-deb.sh
 #
 # Output:
-#   dist/cosmicsnip_1.0.0-1_all.deb
+#   dist/cosmicsnip_1.0.1-1_all.deb
 #
 # Install with:
-#   sudo apt install ./dist/cosmicsnip_1.0.0-1_all.deb
+#   sudo apt install ./dist/cosmicsnip_1.0.1-1_all.deb
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 PACKAGE="cosmicsnip"
 PKG_DIR="dist/${PACKAGE}_${VERSION}-1_all"
 
@@ -78,12 +78,19 @@ cp data/io.github.itssoup.CosmicSnip.metainfo.xml \
 
 # Application icon (scalable SVG)
 mkdir -p "$PKG_DIR/usr/share/icons/hicolor/scalable/apps"
-cp soupfi_icon_dark.svg \
-   "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/io.github.itssoup.CosmicSnip.svg"
+cp data/icons/hicolor/scalable/apps/io.github.itssoup.CosmicSnip.svg \
+   "$PKG_DIR/usr/share/icons/hicolor/scalable/apps/"
+
+# Autostart entry — tray icon on login
+mkdir -p "$PKG_DIR/etc/xdg/autostart"
+cp data/io.github.itssoup.CosmicSnip-autostart.desktop \
+   "$PKG_DIR/etc/xdg/autostart/"
 
 # Doc files
 mkdir -p "$PKG_DIR/usr/share/doc/$PACKAGE"
 cp README.md  "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
+cp CHANGELOG.md "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
+cp SECURITY.md "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
 cp LICENSE    "$PKG_DIR/usr/share/doc/$PACKAGE/" 2>/dev/null || true
 gzip -9 -c debian/changelog > "$PKG_DIR/usr/share/doc/$PACKAGE/changelog.gz"
 
@@ -99,12 +106,12 @@ Priority: optional
 Architecture: all
 Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0, gir1.2-adw-1, python3-pil, python3-dbus, python3-cairo, libnotify-bin
 Maintainer: itssoup <itssoup@users.noreply.github.com>
-Homepage: https://github.com/taran3030/cosmicsnip
+Homepage: https://github.com/itssoup/cosmicsnip
 Description: Screenshot snipping tool for COSMIC Desktop / Wayland
- CosmicSnip is a Windows Snipping Tool clone for COSMIC Desktop (Pop!_OS 24.04).
- Captures the screen, lets you drag-select a region, and opens an editor with
- pen, highlighter, arrow, and rectangle annotation tools. Uses the GTK4 native
- Wayland clipboard and the XDG Desktop Portal for capture.
+ CosmicSnip captures the screen, lets you drag-select a region, and opens an
+ annotation editor with pen, highlighter, arrow, and rectangle tools. The only
+ capture tool that works natively on COSMIC's Wayland compositor. Uses GTK4 +
+ libadwaita, Cairo, and the XDG Desktop Portal for capture.
 EOF
 
 # Post-install: update desktop database

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=CosmicSnip
+Comment=Screenshot tool for COSMIC Desktop — system tray
+Exec=cosmicsnip --tray
+Icon=io.github.itssoup.CosmicSnip
+Type=Application
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

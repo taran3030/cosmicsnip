@@ -1,3 +1,19 @@
+cosmicsnip (1.0.1-1) noble; urgency=medium
+
+  * Overlay reliability/performance update:
+    - Reuse overlay windows across captures, including monitor topology changes.
+    - Use per-monitor overlay path for single-monitor setups too.
+  * Security hardening:
+    - Fix path-prefix checks to use true path ancestry checks.
+    - Harden temp cleanup path validation and symlink handling.
+    - Add SECURITY.md coordinated disclosure policy.
+  * Documentation and release hygiene:
+    - Add CHANGELOG.md.
+    - Improve release-install instructions in README.
+    - Update repository URLs to github.com/itssoup/cosmicsnip.
+
+ -- itssoup <itssoup@users.noreply.github.com>  Sat, 21 Mar 2026 21:10:00 +0000
+
 cosmicsnip (1.0.0-1) noble; urgency=medium
 
   * First stable release.

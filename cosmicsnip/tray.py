@@ -146,11 +146,11 @@ class TrayIcon:
             "Id": GLib.Variant("s", "cosmicsnip"),
             "Title": GLib.Variant("s", "CosmicSnip"),
             "Status": GLib.Variant("s", "Active"),
-            "IconName": GLib.Variant("s", "camera-photo-symbolic"),
+            "IconName": GLib.Variant("s", "io.github.itssoup.CosmicSnip"),
             "ItemIsMenu": GLib.Variant("b", False),
             "Menu": GLib.Variant("o", _MENU_PATH),
             "ToolTip": GLib.Variant("(sa(iiay)ss)", (
-                "camera-photo-symbolic", [], "CosmicSnip", "Click to take a screenshot"
+                "io.github.itssoup.CosmicSnip", [], "CosmicSnip", "Click to take a screenshot"
             )),
         }
         return props.get(prop)

@@ -1,0 +1,54 @@
+name: Security Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Security Tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install bandit pip-audit
+
+      - name: Compile Check
+        run: |
+          python -m py_compile cosmicsnip/*.py
+          python -m compileall -q cosmicsnip
+
+      - name: Static Security Scan (Bandit)
+        run: |
+          bandit -q -r cosmicsnip
+
+      - name: Build Dependency Audit Manifest
+        run: |
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          deps = data.get("project", {}).get("dependencies", [])
+          out = Path("requirements-audit.txt")
+          out.write_text("\n".join(deps) + "\n", encoding="utf-8")
+          print(f"Wrote {out} with {len(deps)} dependencies.")
+          PY
+
+      - name: Dependency Advisory Scan
+        run: |
+          pip-audit -r requirements-audit.txt

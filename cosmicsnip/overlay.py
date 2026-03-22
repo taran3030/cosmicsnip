@@ -112,27 +112,12 @@ class MonitorOverlay(Gtk.Window):
         self._state = state
         self._controller = controller
         self._is_hidden = False
-        # Pixel offset of this monitor in the screenshot image
-        self._px = monitor_info.x - origin_x
-        self._py = monitor_info.y - origin_y
-
-        # Crop this monitor's region from the combined screenshot
-        img_w, img_h = pixbuf.get_width(), pixbuf.get_height()
-        cx = max(0, min(self._px, img_w))
-        cy = max(0, min(self._py, img_h))
-        cw = min(monitor_info.width, img_w - cx)
-        ch = min(monitor_info.height, img_h - cy)
-
-        if cw > 0 and ch > 0:
-            self._local_pixbuf = pixbuf.new_subpixbuf(cx, cy, cw, ch)
-        else:
-            self._local_pixbuf = GdkPixbuf.Pixbuf.new(
-                GdkPixbuf.Colorspace.RGB, False, 8,
-                monitor_info.width, monitor_info.height)
-            self._local_pixbuf.fill(0x000000FF)
-
-        self._local_w = self._local_pixbuf.get_width()
-        self._local_h = self._local_pixbuf.get_height()
+        self._px = 0
+        self._py = 0
+        self._local_pixbuf = None
+        self._local_w = 1
+        self._local_h = 1
+        self._load_local_pixbuf(pixbuf, monitor_info, origin_x, origin_y)
 
         self.set_decorated(False)
         gdk_mon = get_gdk_monitor(monitor_info.gdk_index)
@@ -200,6 +185,45 @@ class MonitorOverlay(Gtk.Window):
         key_ctl = Gtk.EventControllerKey()
         key_ctl.connect("key-pressed", self._on_key)
         self.add_controller(key_ctl)
+
+    def _load_local_pixbuf(self, pixbuf, monitor_info, origin_x, origin_y):
+        """Update monitor mapping and crop this monitor's slice from combined image."""
+        self._info = monitor_info
+        self._px = monitor_info.x - origin_x
+        self._py = monitor_info.y - origin_y
+
+        img_w, img_h = pixbuf.get_width(), pixbuf.get_height()
+        cx = max(0, min(self._px, img_w))
+        cy = max(0, min(self._py, img_h))
+        cw = min(monitor_info.width, img_w - cx)
+        ch = min(monitor_info.height, img_h - cy)
+
+        if cw > 0 and ch > 0:
+            self._local_pixbuf = pixbuf.new_subpixbuf(cx, cy, cw, ch)
+        else:
+            self._local_pixbuf = GdkPixbuf.Pixbuf.new(
+                GdkPixbuf.Colorspace.RGB, False, 8,
+                monitor_info.width, monitor_info.height)
+            self._local_pixbuf.fill(0x000000FF)
+
+        self._local_w = self._local_pixbuf.get_width()
+        self._local_h = self._local_pixbuf.get_height()
+
+    def refresh_capture(self, pixbuf, monitor_info, origin_x, origin_y):
+        """Rebind overlay to a new screenshot while keeping the same window alive."""
+        self._load_local_pixbuf(pixbuf, monitor_info, origin_x, origin_y)
+        self._is_hidden = False
+        self.set_opacity(1.0)
+        if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
+            try:
+                LayerShell.set_layer(self, LayerShell.Layer.OVERLAY)
+                LayerShell.set_keyboard_mode(self, LayerShell.KeyboardMode.EXCLUSIVE)
+                gdk_mon = get_gdk_monitor(monitor_info.gdk_index)
+                if gdk_mon:
+                    LayerShell.set_monitor(self, gdk_mon)
+            except Exception:
+                pass
+        self._canvas.queue_draw()
 
     # ── Coordinate mapping ───────────────────────────────────────────────
 
@@ -291,7 +315,7 @@ class MonitorOverlay(Gtk.Window):
         self._state.update(*self._canvas_to_image(x, y))
         self._state.finish()
         # Immediate redraw on release (bypass coalescing)
-        for ov in self._controller._overlays:
+        for ov in self._controller.active_overlays():
             ov._canvas.queue_draw()
         if self._state.size_ok():
             self._controller.finalise()
@@ -314,8 +338,11 @@ class OverlayController:
         self._on_selected = on_selected
         self._on_cancelled = on_cancelled
         self._state = SelectionState()
+        self._redraw_pending = False
         self._overlays: list[MonitorOverlay] = []
+        self._active_count = len(monitors)
         self.primary_index = monitors[0].gdk_index if monitors else 0
+        self._layout_sig = self._layout_signature(monitors)
 
         # Normalize monitor origins so top-left of combined layout is (0,0).
         # Screenshot pixels start at (0,0) regardless of compositor coords.
@@ -333,19 +360,86 @@ class OverlayController:
                                origin_x=self._origin_x, origin_y=self._origin_y,
                                state=self._state, controller=self))
 
+    @staticmethod
+    def _layout_signature(monitors):
+        return tuple((m.gdk_index, m.x, m.y, m.width, m.height) for m in monitors)
+
+    def active_overlays(self):
+        return self._overlays[:self._active_count]
+
+    def reconfigure(self, image_path, on_selected, on_cancelled, monitors):
+        """Reuse overlay windows for a new capture, adapting to layout changes."""
+        if not monitors:
+            return False
+
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+        except Exception as exc:
+            log.warning("Overlay reuse failed loading image '%s': %s", image_path, exc)
+            return False
+
+        self._image_path = image_path
+        self._on_selected = on_selected
+        self._on_cancelled = on_cancelled
+        self.primary_index = monitors[0].gdk_index if monitors else self.primary_index
+        self._origin_x = min(m.x for m in monitors)
+        self._origin_y = min(m.y for m in monitors)
+        self._layout_sig = self._layout_signature(monitors)
+        self._state.dragging = False
+        self._state.has_selection = False
+        self._state.sx = self._state.sy = self._state.ex = self._state.ey = 0
+        self._redraw_pending = False
+
+        # Grow window pool only if monitor count increases.
+        while len(self._overlays) < len(monitors):
+            mon = monitors[len(self._overlays)]
+            self._overlays.append(
+                MonitorOverlay(
+                    app=self._app,
+                    monitor_info=mon,
+                    pixbuf=pixbuf,
+                    origin_x=self._origin_x,
+                    origin_y=self._origin_y,
+                    state=self._state,
+                    controller=self,
+                )
+            )
+
+        self._active_count = len(monitors)
+        for idx, mon in enumerate(monitors):
+            self._overlays[idx].refresh_capture(pixbuf, mon, self._origin_x, self._origin_y)
+
+        # Keep surplus overlays hidden and inactive.
+        for ov in self._overlays[self._active_count:]:
+            ov._is_hidden = True
+            ov._canvas.queue_draw()
+            if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
+                try:
+                    LayerShell.set_layer(ov, LayerShell.Layer.BACKGROUND)
+                    LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.NONE)
+                except Exception:
+                    pass
+            ov.set_opacity(0)
+
+        log.info(
+            "Reused overlay windows for new capture (active=%d, pooled=%d).",
+            self._active_count, len(self._overlays)
+        )
+        return True
+
     def present(self):
-        for ov in self._overlays:
+        for ov in self.active_overlays():
             ov.present()
 
     def redraw_all(self):
         """Coalesce redraws to max ~60fps. Updates state immediately, defers paint."""
-        if hasattr(self, '_redraw_pending') and self._redraw_pending:
+        if self._redraw_pending:
             return  # a frame callback is already queued
         self._redraw_pending = True
 
         def _do_redraw():
             self._redraw_pending = False
-            for ov in self._overlays:
+            for ov in self.active_overlays():
                 ov._canvas.queue_draw()
             return GLib.SOURCE_REMOVE
 
@@ -353,7 +447,7 @@ class OverlayController:
 
     def _release_keyboard(self):
         """Release exclusive keyboard grab."""
-        for ov in self._overlays:
+        for ov in self.active_overlays():
             if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
                 try:
                     LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.NONE)
@@ -363,6 +457,7 @@ class OverlayController:
     def hide_all(self):
         """Dismiss overlay windows — mark hidden, repaint transparent, drop layer."""
         self._release_keyboard()
+        self._redraw_pending = False
         for ov in self._overlays:
             ov._is_hidden = True
             ov._canvas.queue_draw()
@@ -372,7 +467,7 @@ class OverlayController:
                 except Exception:
                     pass
             ov.set_opacity(0)
-        log.info("Overlays dismissed (%d windows).", len(self._overlays))
+        log.info("Overlays dismissed (active=%d, pooled=%d).", self._active_count, len(self._overlays))
 
     def finalise(self):
         x1, y1, x2, y2 = self._state.rect()
@@ -528,6 +623,29 @@ class FallbackOverlay(Gtk.Window):
             self.close()
             self._on_selected(self._image_path, ix1, iy1, ix2, iy2)
 
+    def reconfigure(self, image_path, on_selected, on_cancelled, monitors=None):
+        """Reload screenshot in the same fallback window."""
+        try:
+            self._pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+        except Exception as exc:
+            log.warning("Fallback overlay reuse failed loading image '%s': %s", image_path, exc)
+            return False
+        self._image_path = image_path
+        self._on_selected = on_selected
+        self._on_cancelled = on_cancelled
+        self._img_w = self._pixbuf.get_width()
+        self._img_h = self._pixbuf.get_height()
+        self._display_pixbuf = None
+        self._disp_x = self._disp_y = 0
+        self._disp_w, self._disp_h = self._img_w, self._img_h
+        self._disp_scale = 1.0
+        self._dragging = False
+        self._sx = self._sy = self._ex = self._ey = 0.0
+        self._has_selection = False
+        self.set_opacity(1.0)
+        GLib.idle_add(self._build_display_cache)
+        return True
+
     def hide_all(self):
         """Match OverlayController's API."""
         self._display_pixbuf = None
@@ -552,7 +670,7 @@ class SelectionOverlay:
 
     def __init__(self, app, image_path, on_selected, on_cancelled, monitors=None):
         _check_layer_shell()
-        if monitors and len(monitors) >= 2:
+        if monitors:
             mode = "layer-shell" if _LAYER_SHELL_AVAILABLE else "fullscreen_on_monitor"
             log.info("Using per-monitor overlay (%d monitors, mode=%s).", len(monitors), mode)
             self._impl = OverlayController(
@@ -571,3 +689,24 @@ class SelectionOverlay:
         """Dismiss overlays. Safe to call after another window is mapped."""
         if hasattr(self._impl, 'hide_all'):
             self._impl.hide_all()
+
+    def reconfigure(self, image_path, on_selected, on_cancelled, monitors=None):
+        """Try to reuse existing overlay resources for a new capture."""
+        if isinstance(self._impl, OverlayController):
+            return self._impl.reconfigure(
+                image_path=image_path,
+                on_selected=on_selected,
+                on_cancelled=on_cancelled,
+                monitors=monitors,
+            )
+        if isinstance(self._impl, FallbackOverlay):
+            # If monitor data is now available, prefer rebuilding with per-monitor windows.
+            if monitors:
+                return False
+            return self._impl.reconfigure(
+                image_path=image_path,
+                on_selected=on_selected,
+                on_cancelled=on_cancelled,
+                monitors=monitors,
+            )
+        return False

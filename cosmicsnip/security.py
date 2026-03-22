@@ -93,8 +93,17 @@ BLOCKED_SAVE_PREFIXES = (
 
 def is_save_path_blocked(path: str | Path) -> bool:
     """Returns True if path is in a system directory where saves are blocked."""
-    resolved = str(Path(path).resolve())
-    return any(resolved.startswith(p) for p in BLOCKED_SAVE_PREFIXES)
+    resolved = Path(path).resolve()
+    for blocked in BLOCKED_SAVE_PREFIXES:
+        root = Path(blocked).resolve()
+        if resolved == root:
+            return True
+        try:
+            resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 def verify_dir_ownership(dir_path: Path) -> None:

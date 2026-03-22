@@ -17,8 +17,12 @@ venv/
 *.log
 CLAUDE.md
 CONTRIBUTING.md
-SECURITY.md
 COSMICSNIP_V020_MASTER_PLAN.md
+AUDIT_PROPOSAL.md
+REAUDIT_*.md
+SECURITY_AUDIT_*.md
 test_layershell.py
 key.txt
 key.txt.pub
+CLAUDE_DEPLOY_HANDOFF.md
+requirements-audit.txt

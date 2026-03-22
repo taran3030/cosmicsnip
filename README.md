@@ -6,6 +6,14 @@ The only capture + annotate tool that works natively on COSMIC's Wayland composi
 
 ---
 
+## Project Transparency
+
+- Version history: [`CHANGELOG.md`](CHANGELOG.md)
+- Security policy and disclosure: [`SECURITY.md`](SECURITY.md)
+- Architecture reference: [`ARCHITECTURE.md`](ARCHITECTURE.md)
+
+---
+
 ## Why CosmicSnip?
 
 COSMIC Desktop uses its own Wayland compositor, which breaks every existing screenshot tool:
@@ -62,18 +70,20 @@ CosmicSnip works because it uses the **XDG Desktop Portal** (`cosmic-screenshot`
 
 ## Install
 
-### From .deb (recommended)
+### From .deb (recommended, no source checkout)
 
-Download from [Releases](https://github.com/taran3030/cosmicsnip/releases/latest):
+Download from [Releases](https://github.com/itssoup/cosmicsnip/releases/latest) and install:
 
 ```bash
-sudo apt install ./cosmicsnip_1.0.0-1_all.deb
+VERSION="1.0.1"
+wget "https://github.com/itssoup/cosmicsnip/releases/download/v${VERSION}/cosmicsnip_${VERSION}-1_all.deb"
+sudo apt install "./cosmicsnip_${VERSION}-1_all.deb"
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/taran3030/cosmicsnip.git
+git clone https://github.com/itssoup/cosmicsnip.git
 cd cosmicsnip
 bash install.sh
 ```
@@ -101,10 +111,10 @@ sudo apt remove cosmicsnip
 ## Build .deb from source
 
 ```bash
-git clone https://github.com/taran3030/cosmicsnip.git
+git clone https://github.com/itssoup/cosmicsnip.git
 cd cosmicsnip
 ./build-deb.sh
-sudo apt install ./dist/cosmicsnip_1.0.0-1_all.deb
+sudo apt install ./dist/cosmicsnip_1.0.1-1_all.deb
 ```
 
 Build requires: `python3`, `dpkg-deb`
@@ -124,6 +134,8 @@ python3 -m cosmicsnip.app
 ## Security
 
 CosmicSnip is designed to handle screenshots safely. Screenshots are sensitive data — they can contain passwords, tokens, personal information.
+
+Security policy and coordinated disclosure: [`SECURITY.md`](SECURITY.md).
 
 ### What we do
 
@@ -149,7 +161,7 @@ CosmicSnip is designed to handle screenshots safely. Screenshots are sensitive d
 
 ### Reporting vulnerabilities
 
-If you find a security issue, please open a [GitHub issue](https://github.com/taran3030/cosmicsnip/issues) or email the maintainer directly. We take security seriously — this tool handles your screen content.
+Do not open public issues for security reports. Use private reporting as documented in [`SECURITY.md`](SECURITY.md).
 
 ---
 
@@ -170,39 +182,7 @@ If you find a security issue, please open a [GitHub issue](https://github.com/ta
 
 ## Release history
 
-### v1.0.0 — 2026-03-16
-
-First stable release.
-
-- Libadwaita UI (Adw.ApplicationWindow, HeaderBar, ToastOverlay)
-- System tray icon via DBus StatusNotifierItem
-- App persistence — stays alive between snips
-- Out-of-bounds annotation with auto-trim transparent PNG output
-- Multi-monitor layer-shell overlays with shared selection state
-- Monitor detection with config caching
-- Multi-arch layer-shell support (x86_64, aarch64)
-
-### v0.2.0 — 2026-03-16
-
-Security hardening and multi-monitor support.
-
-- Per-monitor overlays via `gtk4-layer-shell`
-- TOCTOU fix in temp file chmod
-- PIL decompression bomb limit
-- Removed dead `wl-copy` code (GTK4 native clipboard)
-- Log/temp file permission hardening
-- Save path validation
-- XDG path sanitization
-
-### v0.1.0 — 2026-03-13
-
-Initial release.
-
-- Screen capture via `cosmic-screenshot`
-- Drag-to-select overlay
-- Annotation editor with pen, highlighter, arrow, rectangle
-- GTK4 native clipboard
-- Basic security (root refusal, symlink checks)
+See [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 

@@ -25,6 +25,21 @@
   <url type="bugtracker">https://github.com/itssoup/cosmicsnip/issues</url>
   <developer_name>itssoup</developer_name>
   <releases>
+    <release version="1.0.1" date="2026-03-21">
+      <description>
+        <p>Overlay reliability update, security hardening, and documentation polish.</p>
+      </description>
+    </release>
+    <release version="1.0.0" date="2026-03-16">
+      <description>
+        <p>First stable release with multi-monitor selection overlays and annotation editor.</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-03-16">
+      <description>
+        <p>Security hardening and multi-monitor support improvements.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-03-13">
       <description>
         <p>Initial release. Core capture, annotation, clipboard, and save features.</p>

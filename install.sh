@@ -54,8 +54,16 @@ LAUNCHER
 chmod +x ~/.local/bin/cosmicsnip
 
 # Install app icon
-cp "$SCRIPT_DIR/soupfi_icon_dark.svg" \
-   ~/.local/share/icons/hicolor/scalable/apps/io.github.itssoup.CosmicSnip.svg
+cp "$SCRIPT_DIR/data/icons/hicolor/scalable/apps/io.github.itssoup.CosmicSnip.svg" \
+   ~/.local/share/icons/hicolor/scalable/apps/
+
+# Autostart entry — tray icon on login
+mkdir -p ~/.config/autostart
+cp "$SCRIPT_DIR/data/io.github.itssoup.CosmicSnip-autostart.desktop" \
+   ~/.config/autostart/
+# Fix path for local install
+sed -i "s|Exec=cosmicsnip|Exec=$HOME/.local/bin/cosmicsnip|" \
+   ~/.config/autostart/io.github.itssoup.CosmicSnip-autostart.desktop
 
 # ── 4. Desktop entry ────────────────────────────────────────────────────────
 echo "[4/5] Creating desktop entry..."
@@ -65,7 +73,7 @@ Name=CosmicSnip
 GenericName=Screenshot Tool
 Comment=Capture, annotate, and copy screenshots
 Exec=$HOME/.local/bin/cosmicsnip
-Icon=accessories-screenshot
+Icon=io.github.itssoup.CosmicSnip
 Type=Application
 Categories=Utility;Graphics;GTK;
 Keywords=screenshot;snip;capture;annotate;clip;

@@ -77,10 +77,10 @@ class CosmicSnipApp(Adw.Application):
         self._start_capture()
 
     def _start_capture(self):
-        # Clean up any existing overlay before starting a new one
-        if self._overlay:
-            self._overlay.hide_all()
-            self._overlay = None
+        # Keep old overlay object around so we can try reusing windows/surfaces.
+        old_overlay = self._overlay
+        if old_overlay:
+            old_overlay.hide_all()
 
         log.info("Starting screen capture...")
         try:
@@ -96,8 +96,19 @@ class CosmicSnipApp(Adw.Application):
                  ", ".join(f"{m.name}:{m.width}x{m.height}+{m.x}+{m.y}" for m in monitors))
 
         log.info("Presenting selection overlay.")
+        if old_overlay and old_overlay.reconfigure(
+            image_path=image_path,
+            on_selected=self._on_region_selected,
+            on_cancelled=self._on_cancelled,
+            monitors=monitors,
+        ):
+            self._overlay = old_overlay
+            self._overlay.present()
+            return
+
         self._overlay = SelectionOverlay(
-            app=self, image_path=image_path,
+            app=self,
+            image_path=image_path,
             on_selected=self._on_region_selected,
             on_cancelled=self._on_cancelled,
             monitors=monitors,
@@ -121,7 +132,6 @@ class CosmicSnipApp(Adw.Application):
             cleanup_file(image_path)
 
             log.info("Opening editor: %s", crop_path)
-            self._overlay = None
             editor = SnipEditor(app=self, image_path=crop_path)
             editor.present()
 
@@ -129,7 +139,6 @@ class CosmicSnipApp(Adw.Application):
             log.exception("Failed to crop/open: %s", exc)
             if self._overlay:
                 self._overlay.hide_all()
-                self._overlay = None
             self._show_error(f"Failed to crop image: {exc}")
 
     def _on_cancelled(self):
@@ -137,7 +146,6 @@ class CosmicSnipApp(Adw.Application):
         log.info("Selection cancelled — waiting in background.")
         if self._overlay:
             self._overlay.hide_all()
-        self._overlay = None
 
     def _show_error(self, message):
         parent = Gtk.Window(application=self)

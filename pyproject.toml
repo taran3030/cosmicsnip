@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cosmicsnip"
-version = "1.0.0"
+version = "1.0.1"
 description = "A polished screenshot snipping tool for COSMIC Desktop / Wayland"
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,8 +27,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/taran3030/cosmicsnip"
-Issues = "https://github.com/taran3030/cosmicsnip/issues"
+Homepage = "https://github.com/itssoup/cosmicsnip"
+Issues = "https://github.com/itssoup/cosmicsnip/issues"
 
 [project.scripts]
 cosmicsnip = "cosmicsnip.app:main"

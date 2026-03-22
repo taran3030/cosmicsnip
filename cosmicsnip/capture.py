@@ -134,8 +134,13 @@ def cleanup_file(path: str) -> None:
     """Remove a specific temp file after it's been consumed."""
     try:
         p = Path(path)
-        if p.exists() and str(p).startswith(str(TEMP_DIR)):
-            p.unlink(missing_ok=True)
-            log.debug("Cleaned up temp file: %s", path)
+        if not p.exists():
+            return
+        if p.is_symlink():
+            log.warning("Refusing to remove symlink temp path: %s", path)
+            return
+        resolved = validate_path_within(p, TEMP_DIR)
+        resolved.unlink(missing_ok=True)
+        log.debug("Cleaned up temp file: %s", path)
     except Exception as exc:
         log.warning("cleanup_file error for %s: %s", path, exc)
