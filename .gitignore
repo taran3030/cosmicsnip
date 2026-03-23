@@ -26,4 +26,6 @@ key.txt
 key.txt.pub
 CLAUDE_DEPLOY_HANDOFF.md
 CODEX_AUDIT_V101.md
+CODEX_AUDIT_V103.md
+CODEX_AUDIT_*.md
 requirements-audit.txt

@@ -73,7 +73,6 @@ GenericName=Screenshot Tool
 Comment=Capture, annotate, and copy screenshots
 Exec=$HOME/.local/bin/cosmicsnip
 TryExec=$HOME/.local/bin/cosmicsnip
-DBusActivatable=true
 Icon=io.github.itssoup.CosmicSnip
 Type=Application
 Categories=Graphics;GTK;

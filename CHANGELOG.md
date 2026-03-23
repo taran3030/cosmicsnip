@@ -2,12 +2,22 @@
 
 All notable changes to CosmicSnip are documented in this file.
 
-## [1.0.3] - 2026-03-22
+## [1.0.4] - 2026-03-22
 
 ### Fixed
-- Removed overlay window pooling/reuse — fixes persistent compositor artifacts on COSMIC Wayland.
-- Removed `DBusActivatable` from desktop entry — fixes session crash on COSMIC compositor.
-- Fresh overlay windows created per capture for reliable hide/dismiss behavior.
+- Overlay windows now persist and are reused via `reconfigure()` — fixes ghost surface accumulation that caused stacked panel bars and duplicated dock icons on COSMIC Wayland.
+- Removed `DBusActivatable` from desktop entry and source installer — fixes session crash on COSMIC compositor.
+- Synced all release metadata dates and descriptions across CHANGELOG, metainfo.xml, and debian/changelog.
+- Removed unused `Callable` import from overlay module.
+
+### Added
+- Maintainability audit script (`scripts/audit-maintainability.sh`) with policy drift, complexity, duplication, and dead-code checks.
+- CI maintainability job in GitHub Actions workflow with artifact upload.
+- Release audit log (`RELEASE_AUDIT_LOG.md`) for SOC 2 Type II compliance traceability.
+
+### Security
+- Full security audit completed: bandit clean, no risky APIs, path/symlink hardening verified.
+- CISO risk acceptance recorded for all open items with review checkpoint 2026-06-30.
 
 ## [1.0.2] - 2026-03-21
 

@@ -65,3 +65,42 @@ jobs:
       - name: Dependency Advisory Scan
         run: |
           pip-audit -r requirements-audit.txt --no-deps --disable-pip
+
+  maintainability:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Maintainability Tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-maintainability.txt
+          npm install --prefix .github/tools jscpd
+          echo "$GITHUB_WORKSPACE/.github/tools/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Run Maintainability Audit
+        run: |
+          ./scripts/audit-maintainability.sh cosmicsnip | tee maintainability-report.txt
+
+      - name: Upload Maintainability Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintainability-report
+          path: maintainability-report.txt

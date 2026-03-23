@@ -14,7 +14,6 @@ gi.require_foreign("cairo")
 
 import cairo
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
-from typing import Callable
 
 from cosmicsnip.log import get_logger
 from cosmicsnip.monitors import MonitorInfo, get_gdk_monitor
@@ -323,7 +322,13 @@ class MonitorOverlay(Gtk.Window):
 # ── Overlay controller ───────────────────────────────────────────────────────
 
 class OverlayController:
-    """Manages per-monitor overlays with shared selection state."""
+    """Manages per-monitor overlays with shared selection state.
+
+    Windows are created once and reused across captures. On COSMIC Wayland,
+    layer-shell surfaces cannot be destroyed/closed/unrealized without crashing
+    the compositor, so overlays persist for the app's lifetime and are hidden
+    by painting transparent + dropping to BACKGROUND layer + opacity 0.
+    """
 
     def __init__(self, app, image_path, monitors, on_selected, on_cancelled):
         self._app = app
@@ -335,21 +340,59 @@ class OverlayController:
         self._overlays: list[MonitorOverlay] = []
         self.primary_index = monitors[0].gdk_index if monitors else 0
 
-        # Normalize monitor origins so top-left of combined layout is (0,0).
-        # Screenshot pixels start at (0,0) regardless of compositor coords.
-        self._origin_x = min(m.x for m in monitors)
-        self._origin_y = min(m.y for m in monitors)
+        origin_x = min(m.x for m in monitors)
+        origin_y = min(m.y for m in monitors)
 
         pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
         log.info("Combined image: %dx%d px  layout origin=(%d,%d)",
-                 pixbuf.get_width(), pixbuf.get_height(),
-                 self._origin_x, self._origin_y)
+                 pixbuf.get_width(), pixbuf.get_height(), origin_x, origin_y)
 
         for mon in monitors:
             self._overlays.append(
                 MonitorOverlay(app=app, monitor_info=mon, pixbuf=pixbuf,
-                               origin_x=self._origin_x, origin_y=self._origin_y,
+                               origin_x=origin_x, origin_y=origin_y,
                                state=self._state, controller=self))
+
+    def reconfigure(self, image_path, on_selected, on_cancelled, monitors):
+        """Update existing overlay windows with a new capture. No new windows created."""
+        if not monitors:
+            return False
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+        except Exception as exc:
+            log.warning("Overlay reconfigure failed: %s", exc)
+            return False
+
+        self._image_path = image_path
+        self._on_selected = on_selected
+        self._on_cancelled = on_cancelled
+        self._state = SelectionState()
+        self._redraw_pending = False
+        self.primary_index = monitors[0].gdk_index if monitors else self.primary_index
+
+        origin_x = min(m.x for m in monitors)
+        origin_y = min(m.y for m in monitors)
+
+        # If monitor count changed, we can't safely reuse
+        if len(monitors) != len(self._overlays):
+            return False
+
+        for idx, mon in enumerate(monitors):
+            ov = self._overlays[idx]
+            ov._load_local_pixbuf(pixbuf, mon, origin_x, origin_y)
+            ov._state = self._state
+            ov._is_hidden = False
+            ov.set_opacity(1.0)
+            if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
+                try:
+                    LayerShell.set_layer(ov, LayerShell.Layer.OVERLAY)
+                    LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.EXCLUSIVE)
+                except Exception as exc:
+                    log.debug("Layer-shell re-show failed: %s", exc)
+            ov._canvas.queue_draw()
+
+        log.info("Overlay windows reconfigured for new capture.")
+        return True
 
     def active_overlays(self):
         return self._overlays
@@ -359,22 +402,21 @@ class OverlayController:
             ov.present()
 
     def redraw_all(self):
-        """Coalesce redraws to max ~60fps. Updates state immediately, defers paint."""
+        """Coalesce redraws to max ~60fps."""
         if self._redraw_pending:
-            return  # a frame callback is already queued
+            return
         self._redraw_pending = True
 
         def _do_redraw():
             self._redraw_pending = False
-            for ov in self.active_overlays():
+            for ov in self._overlays:
                 ov._canvas.queue_draw()
             return GLib.SOURCE_REMOVE
 
-        GLib.timeout_add(16, _do_redraw)  # ~60fps
+        GLib.timeout_add(16, _do_redraw)
 
     def _release_keyboard(self):
-        """Release exclusive keyboard grab."""
-        for ov in self.active_overlays():
+        for ov in self._overlays:
             if _LAYER_SHELL_AVAILABLE and LayerShell is not None:
                 try:
                     LayerShell.set_keyboard_mode(ov, LayerShell.KeyboardMode.NONE)
@@ -382,7 +424,7 @@ class OverlayController:
                     log.debug("Layer-shell keyboard release failed: %s", exc)
 
     def hide_all(self):
-        """Dismiss overlay windows — mark hidden, repaint transparent, drop layer."""
+        """Hide overlays — paint transparent, drop to BACKGROUND, zero opacity."""
         self._release_keyboard()
         self._redraw_pending = False
         for ov in self._overlays:
@@ -394,7 +436,7 @@ class OverlayController:
                 except Exception as exc:
                     log.debug("Layer-shell hide transition failed: %s", exc)
             ov.set_opacity(0)
-        log.info("Overlays dismissed.")
+        log.info("Overlays hidden.")
 
     def finalise(self):
         x1, y1, x2, y2 = self._state.rect()
@@ -594,4 +636,12 @@ class SelectionOverlay:
         """Dismiss overlays. Safe to call after another window is mapped."""
         if hasattr(self._impl, 'hide_all'):
             self._impl.hide_all()
+
+    def reconfigure(self, image_path, on_selected, on_cancelled, monitors=None):
+        """Reuse existing windows with new capture data. Returns False if rebuild needed."""
+        if isinstance(self._impl, OverlayController) and monitors:
+            return self._impl.reconfigure(
+                image_path=image_path, on_selected=on_selected,
+                on_cancelled=on_cancelled, monitors=monitors)
+        return False
 

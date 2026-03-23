@@ -1,8 +1,16 @@
+cosmicsnip (1.0.4-1) unstable; urgency=medium
+
+  * Persistent overlay windows with safe reuse — fixes ghost artifacts on COSMIC
+  * Removed DBusActivatable from desktop entry and source installer — fixes session crash
+  * Full security audit with CISO risk acceptance
+  * Maintainability CI pipeline and audit automation
+  * Release audit log for compliance traceability
+
+ -- itssoup <itssoup@users.noreply.github.com>  Sat, 22 Mar 2026 00:00:00 +0000
+
 cosmicsnip (1.0.3-1) unstable; urgency=medium
 
-  * Removed overlay window pooling/reuse — fixes compositor artifacts on COSMIC
-  * Removed DBusActivatable from desktop entry — fixes session crash on COSMIC
-  * Fresh overlay windows per capture for reliable hide/dismiss behavior
+  * Intermediate build during overlay lifecycle debugging
 
  -- itssoup <itssoup@users.noreply.github.com>  Sat, 22 Mar 2026 00:00:00 +0000
 

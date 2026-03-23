@@ -38,9 +38,14 @@
   </developer>
   <update_contact>itssoup@users.noreply.github.com</update_contact>
   <releases>
-    <release version="1.0.3" date="2026-03-21">
+    <release version="1.0.4" date="2026-03-22">
       <description>
-        <p>Distro-submission polish: removed Pillow dependency, professional documentation, AppStream/desktop entry compliance, contributor guide.</p>
+        <p>Persistent overlay windows with safe reuse, full security audit, maintainability CI, and SOC 2 Type II audit traceability.</p>
+      </description>
+    </release>
+    <release version="1.0.3" date="2026-03-22">
+      <description>
+        <p>Fixed overlay ghost artifacts and session crash on COSMIC Wayland. Removed DBusActivatable from all desktop entries.</p>
       </description>
     </release>
     <release version="1.0.1" date="2026-03-21">

@@ -78,7 +78,6 @@ class CosmicSnipApp(Adw.Application):
     def _start_capture(self):
         if self._overlay:
             self._overlay.hide_all()
-            self._overlay = None
 
         log.info("Starting screen capture...")
         try:
@@ -93,7 +92,19 @@ class CosmicSnipApp(Adw.Application):
         log.info("Monitor layout: %d monitor(s) — %s", len(monitors),
                  ", ".join(f"{m.name}:{m.width}x{m.height}+{m.x}+{m.y}" for m in monitors))
 
-        log.info("Presenting selection overlay.")
+        # Reuse existing overlay windows if possible (COSMIC Wayland cannot
+        # destroy/close layer-shell surfaces without crashing the compositor).
+        if self._overlay and self._overlay.reconfigure(
+            image_path=image_path,
+            on_selected=self._on_region_selected,
+            on_cancelled=self._on_cancelled,
+            monitors=monitors,
+        ):
+            log.info("Reusing overlay windows.")
+            self._overlay.present()
+            return
+
+        log.info("Creating new overlay windows.")
         self._overlay = SelectionOverlay(
             app=self,
             image_path=image_path,

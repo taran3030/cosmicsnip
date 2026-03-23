@@ -17,7 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.0.3"
+VERSION="1.0.4"
 PACKAGE="cosmicsnip"
 PKG_DIR="dist/${PACKAGE}_${VERSION}-1_all"
 
