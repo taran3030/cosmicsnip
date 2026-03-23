@@ -7,17 +7,17 @@
 #   ./build-deb.sh
 #
 # Output:
-#   dist/cosmicsnip_1.0.2-1_all.deb
+#   dist/cosmicsnip_1.0.3-1_all.deb
 #
 # Install with:
-#   sudo apt install ./dist/cosmicsnip_1.0.2-1_all.deb
+#   sudo apt install ./dist/cosmicsnip_1.0.3-1_all.deb
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.0.2"
+VERSION="1.0.3"
 PACKAGE="cosmicsnip"
 PKG_DIR="dist/${PACKAGE}_${VERSION}-1_all"
 

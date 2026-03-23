@@ -38,7 +38,7 @@
   </developer>
   <update_contact>itssoup@users.noreply.github.com</update_contact>
   <releases>
-    <release version="1.0.2" date="2026-03-21">
+    <release version="1.0.3" date="2026-03-21">
       <description>
         <p>Distro-submission polish: removed Pillow dependency, professional documentation, AppStream/desktop entry compliance, contributor guide.</p>
       </description>

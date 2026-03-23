@@ -1,3 +1,11 @@
+cosmicsnip (1.0.3-1) unstable; urgency=medium
+
+  * Removed overlay window pooling/reuse — fixes compositor artifacts on COSMIC
+  * Removed DBusActivatable from desktop entry — fixes session crash on COSMIC
+  * Fresh overlay windows per capture for reliable hide/dismiss behavior
+
+ -- itssoup <itssoup@users.noreply.github.com>  Sat, 22 Mar 2026 00:00:00 +0000
+
 cosmicsnip (1.0.2-1) unstable; urgency=medium
 
   * Distro-submission polish: professional docs, cleaned comments, documented constants

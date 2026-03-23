@@ -3,7 +3,7 @@
 > Complete technical reference for the codebase. Intended for contributors and
 > maintainers who need to understand how every piece fits together.
 >
-> **Last updated:** 2026-03-21 · **Version:** 1.0.2
+> **Last updated:** 2026-03-21 · **Version:** 1.0.3
 
 ---
 
@@ -144,7 +144,7 @@ cosmicsnip/
 
 | Symbol | Line | Value |
 |--------|------|-------|
-| `__version__` | 3 | `"1.0.2"` |
+| `__version__` | 3 | `"1.0.3"` |
 | `__app_id__` | 4 | `"io.github.itssoup.CosmicSnip"` |
 
 Referenced by: `app.py` (application ID), `tray.py` (icon name).
@@ -659,13 +659,13 @@ Quick lookup for where core behavior lives.
 
 ### pyproject.toml
 - Name: `cosmicsnip`
-- Version: `1.0.2`
+- Version: `1.0.3`
 - Python: `>=3.10`
 - Dependencies: `PyGObject>=3.42`, `dbus-python>=1.3`
 - Entry point: `cosmicsnip = cosmicsnip.app:main`
 
 ### build-deb.sh
-Builds a standalone `.deb` at `dist/cosmicsnip_1.0.2-1_all.deb`.
+Builds a standalone `.deb` at `dist/cosmicsnip_1.0.3-1_all.deb`.
 
 **Package tree:**
 ```

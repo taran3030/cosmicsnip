@@ -76,7 +76,7 @@ CosmicSnip works because it uses the **XDG Desktop Portal** (`cosmic-screenshot`
 Download from [Releases](https://github.com/itssoup/cosmicsnip/releases/latest) and install:
 
 ```bash
-VERSION="1.0.2"
+VERSION="1.0.3"
 wget "https://github.com/itssoup/cosmicsnip/releases/download/v${VERSION}/cosmicsnip_${VERSION}-1_all.deb"
 sudo apt install "./cosmicsnip_${VERSION}-1_all.deb"
 ```
@@ -115,7 +115,7 @@ sudo apt remove cosmicsnip
 git clone https://github.com/itssoup/cosmicsnip.git
 cd cosmicsnip
 ./build-deb.sh
-sudo apt install ./dist/cosmicsnip_1.0.2-1_all.deb
+sudo apt install ./dist/cosmicsnip_1.0.3-1_all.deb
 ```
 
 Build requires: `python3`, `dpkg-deb`

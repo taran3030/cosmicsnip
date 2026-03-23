@@ -4,7 +4,6 @@ GenericName=Screenshot Tool
 Comment=Capture, annotate, and copy screenshots on COSMIC Desktop
 Exec=cosmicsnip
 TryExec=cosmicsnip
-DBusActivatable=true
 Icon=io.github.itssoup.CosmicSnip
 Type=Application
 Categories=Graphics;GTK;

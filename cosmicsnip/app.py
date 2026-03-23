@@ -76,10 +76,9 @@ class CosmicSnipApp(Adw.Application):
         self._start_capture()
 
     def _start_capture(self):
-        # Keep old overlay object around so we can try reusing windows/surfaces.
-        old_overlay = self._overlay
-        if old_overlay:
-            old_overlay.hide_all()
+        if self._overlay:
+            self._overlay.hide_all()
+            self._overlay = None
 
         log.info("Starting screen capture...")
         try:
@@ -95,16 +94,6 @@ class CosmicSnipApp(Adw.Application):
                  ", ".join(f"{m.name}:{m.width}x{m.height}+{m.x}+{m.y}" for m in monitors))
 
         log.info("Presenting selection overlay.")
-        if old_overlay and old_overlay.reconfigure(
-            image_path=image_path,
-            on_selected=self._on_region_selected,
-            on_cancelled=self._on_cancelled,
-            monitors=monitors,
-        ):
-            self._overlay = old_overlay
-            self._overlay.present()
-            return
-
         self._overlay = SelectionOverlay(
             app=self,
             image_path=image_path,
